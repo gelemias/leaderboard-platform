@@ -4,6 +4,7 @@ import { getPeriodBounds, isLeaderboardPeriod, type LeaderboardPeriod } from "..
 import { jsonError } from "../http";
 import type { AppEnv } from "../types";
 import { z } from "zod";
+import { getRateLimits } from "../config";
 
 const querySchema = z.object({
 	ruleset_version: z.string().min(1).max(128),
@@ -43,7 +44,7 @@ leaderboardRoutes.get("/games/:slug/leaderboards/:period", async (c) => {
 	}
 
 	const rateSubject = parsed.data.player_id ?? c.req.header("CF-Connecting-IP") ?? "anonymous";
-	const rate = await consumeRateLimit(c.env.DB, "refresh", rateSubject, 60, 60);
+	const rate = await consumeRateLimit(c.env.DB, "refresh", rateSubject, getRateLimits(c.env).leaderboardPerMinute, 60);
 	if (!rate.allowed) {
 		return jsonError(c, 429, "RATE_LIMITED", "Too many leaderboard refreshes; try again later", {
 			reset_at: rate.resetAt,

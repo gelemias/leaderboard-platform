@@ -14,6 +14,7 @@ import { runSubmissionRequestSchema, type RunSubmissionRequest } from "../valida
 import { validateRunSubmission } from "../domain/run-validation";
 import { replayStatsMatch } from "../domain/replay-validator";
 import { replayValidatorRegistry } from "../domain/replay-registry";
+import { getRateLimits } from "../config";
 
 export const runRoutes = new Hono<AppEnv>();
 
@@ -59,6 +60,7 @@ function sameRun(existing: Awaited<ReturnType<typeof getRunById>>, incoming: Run
 		existing.jump_score_points === incoming.jump_score_points &&
 		existing.double_gum_bonus_points === incoming.double_gum_bonus_points &&
 		existing.golden_treat_bonus_points === incoming.golden_treat_bonus_points &&
+		sameJson(existing.game_stats, incoming.game_stats) &&
 		sameJson(existing.input_trace, incoming.input_trace)
 	);
 }
@@ -84,7 +86,7 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 		return jsonError(c, 422, "NAME_MISMATCH", "Run name does not match the registered player name");
 	}
 
-	const validationError = validateRunSubmission({ ...incoming, game_id: game.id });
+	const validationError = validateRunSubmission({ ...incoming, game_id: game.id }, ruleset.validator_key);
 	if (validationError) return jsonError(c, 422, "INVALID_RUN", validationError);
 
 	const session = await getRunSessionByTokenHash(c.env.DB, await sha256Hex(incoming.session_token));
@@ -130,7 +132,13 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 		return jsonError(c, 409, "RUN_SESSION_CONSUMED", "Run session has already been consumed");
 	}
 
-	const rate = await consumeRateLimit(c.env.DB, "submission", incoming.player_id, 30, 3600);
+	const rate = await consumeRateLimit(
+		c.env.DB,
+		"submission",
+		incoming.player_id,
+		getRateLimits(c.env).submissionsPerHour,
+		3600,
+	);
 	if (!rate.allowed) {
 		return jsonError(c, 429, "RATE_LIMITED", "Too many submissions; try again later", {
 			reset_at: rate.resetAt,
@@ -170,8 +178,8 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 				power_up_types_collected, power_up_collection_counts,
 				power_up_activation_counts, shield_breaks, double_gum_boosted_jumps,
 				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points,
-				run_session_id, input_trace
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				run_session_id, input_trace, game_stats
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		)
 			.bind(
 				incoming.run_id,
@@ -199,6 +207,7 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 				incoming.golden_treat_bonus_points,
 				incoming.run_id,
 				stableJson(incoming.input_trace),
+				stableJson(incoming.game_stats),
 			),
 		c.env.DB.prepare(
 				"UPDATE run_sessions SET status = 'submitted', consumed_at = ? WHERE run_id = ? AND status = 'issued'",

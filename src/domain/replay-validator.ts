@@ -1,20 +1,7 @@
 import type { RunSubmission } from "../validation/run";
 import type { ReplayInputTrace } from "../validation/replay";
 
-export const REPLAY_STAT_KEYS = [
-	"score",
-	"jumps",
-	"near_misses",
-	"highest_combo",
-	"power_up_types_collected",
-	"power_up_collection_counts",
-	"power_up_activation_counts",
-	"shield_breaks",
-	"double_gum_boosted_jumps",
-	"jump_score_points",
-	"double_gum_bonus_points",
-	"golden_treat_bonus_points",
-] as const;
+export const REPLAY_STAT_KEYS = ["score", "game_stats"] as const;
 
 export type ReplayStats = Pick<RunSubmission, (typeof REPLAY_STAT_KEYS)[number]>;
 

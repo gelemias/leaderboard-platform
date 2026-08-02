@@ -1,4 +1,13 @@
-export type AppEnv = { Bindings: Env };
+export type AppBindings = Env & {
+	PLATFORM_API_TOKEN?: string;
+	AUTH_REQUIRED?: string;
+	ENVIRONMENT?: string;
+	SESSION_RATE_LIMIT_PER_HOUR?: string;
+	SUBMISSION_RATE_LIMIT_PER_HOUR?: string;
+	LEADERBOARD_RATE_LIMIT_PER_MINUTE?: string;
+};
+
+export type AppEnv = { Bindings: AppBindings };
 
 export type GameRow = {
 	id: string;
@@ -12,6 +21,7 @@ export type RulesetRow = {
 	game_id: string;
 	version: string;
 	eligible_for_leaderboard: number;
+	validator_key: string;
 };
 
 export type GamePlayerRow = {
@@ -46,6 +56,7 @@ export type RunRow = {
 	golden_treat_bonus_points: number;
 	run_session_id: string | null;
 	input_trace: string;
+	game_stats: string;
 };
 
 export type RunSessionRow = {

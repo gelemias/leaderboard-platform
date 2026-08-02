@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { consumeRateLimit, getGameBySlug, getGamePlayer, getRuleset } from "../db";
+import { getRateLimits } from "../config";
 import { createOpaqueToken, createRunSeed, sha256Hex } from "../crypto";
 import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
@@ -34,7 +35,7 @@ runSessionRoutes.post("/games/:slug/run-sessions", async (c) => {
 	const player = await getGamePlayer(c.env.DB, game.id, playerId);
 	if (!player) return jsonError(c, 404, "UNKNOWN_PLAYER", "Player is not registered for this game");
 
-	const rate = await consumeRateLimit(c.env.DB, "run-session", playerId, 20, 3600);
+	const rate = await consumeRateLimit(c.env.DB, "run-session", playerId, getRateLimits(c.env).sessionsPerHour, 3600);
 	if (!rate.allowed) {
 		return jsonError(c, 429, "RATE_LIMITED", "Too many run sessions; try again later", {
 			reset_at: rate.resetAt,

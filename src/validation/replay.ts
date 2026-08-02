@@ -19,11 +19,20 @@ const pickupEventSchema = z
 const pauseEventSchema = z.object({ type: z.literal("pause"), t_ms: timestampSchema }).strict();
 const resumeEventSchema = z.object({ type: z.literal("resume"), t_ms: timestampSchema }).strict();
 
-export const replayInputEventSchema = z.discriminatedUnion("type", [
+const genericEventSchema = z
+	.object({
+		type: z.string().min(1).max(64),
+		t_ms: timestampSchema,
+		data: z.record(z.string().max(64), z.unknown()).default({}),
+	})
+	.strict();
+
+export const replayInputEventSchema = z.union([
 	swipeEventSchema,
 	pickupEventSchema,
 	pauseEventSchema,
 	resumeEventSchema,
+	genericEventSchema,
 ]);
 
 export const replayInputTraceSchema = z

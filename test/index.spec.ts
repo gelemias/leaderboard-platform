@@ -7,6 +7,8 @@ import {
 	type ReplayStats,
 } from "../src/domain/replay-validator";
 import { replayValidatorRegistry } from "../src/domain/replay-registry";
+import { tokenMatches } from "../src/auth";
+import { getRateLimits } from "../src/config";
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -63,6 +65,7 @@ function validApiRun(
 		jump_score_points: score,
 		double_gum_bonus_points: 0,
 		golden_treat_bonus_points: 0,
+		game_stats: { jumps: score, near_misses: 0, highest_combo: 1 },
 		session_token: session.session_token,
 		session_nonce: session.nonce,
 		input_trace: [{ type: "swipe", t_ms: 100, direction: "right" }],
@@ -72,17 +75,7 @@ function validApiRun(
 function statsForRun(run: ReturnType<typeof validApiRun>): ReplayStats {
 	return {
 		score: run.score,
-		jumps: run.jumps,
-		near_misses: run.near_misses,
-		highest_combo: run.highest_combo,
-		power_up_types_collected: run.power_up_types_collected,
-		power_up_collection_counts: run.power_up_collection_counts,
-		power_up_activation_counts: run.power_up_activation_counts,
-		shield_breaks: run.shield_breaks,
-		double_gum_boosted_jumps: run.double_gum_boosted_jumps,
-		jump_score_points: run.jump_score_points,
-		double_gum_bonus_points: run.double_gum_bonus_points,
-		golden_treat_bonus_points: run.golden_treat_bonus_points,
+		game_stats: run.game_stats,
 	};
 }
 
@@ -237,23 +230,43 @@ describe("leaderboard platform foundation", () => {
 		expect(result).toEqual({ status: "pending", reason: "SIMULATOR_NOT_REGISTERED" });
 	});
 
+	it("supports generic trace events and production security settings", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-session",
+			display_name: "Session Player",
+		});
+		const genericSession = await issueRunSession("api-player-session");
+		const genericRun = {
+			...validApiRun(genericSession, "api-player-session", 10, "Session Player"),
+			input_trace: [{ type: "button_pressed", t_ms: 100, data: { button: "boost" } }],
+		};
+		const response = await postJson("/v1/games/api-game/runs", genericRun);
+		expect(response.status).toBe(201);
+		expect((await response.json()).verification_status).toBe("pending");
+
+		expect(await tokenMatches("secret", "secret")).toBe(true);
+		expect(await tokenMatches("secret", "different")).toBe(false);
+		expect(getRateLimits({} as never)).toEqual({
+			sessionsPerHour: 20,
+			submissionsPerHour: 30,
+			leaderboardPerMinute: 60,
+		});
+		expect(
+			getRateLimits({
+				SESSION_RATE_LIMIT_PER_HOUR: "2000",
+				SUBMISSION_RATE_LIMIT_PER_HOUR: "45",
+				LEADERBOARD_RATE_LIMIT_PER_MINUTE: "invalid",
+			} as never),
+		).toEqual({ sessionsPerHour: 1000, submissionsPerHour: 45, leaderboardPerMinute: 60 });
+	});
+
 	it("requires the simulator result to match every submitted statistic", () => {
 		const stats: ReplayStats = {
 			score: 12,
-			jumps: 5,
-			near_misses: 2,
-			highest_combo: 3,
-			power_up_types_collected: ["double_gum"],
-			power_up_collection_counts: { double_gum: 1 },
-			power_up_activation_counts: { double_gum: 1 },
-			shield_breaks: 0,
-			double_gum_boosted_jumps: 5,
-			jump_score_points: 7,
-			double_gum_bonus_points: 5,
-			golden_treat_bonus_points: 0,
+			game_stats: { jumps: 5, near_misses: 2, highest_combo: 3, double_gum: 1 },
 		};
-		expect(replayStatsMatch(stats, { ...stats, power_up_collection_counts: { double_gum: 2 } })).toBe(false);
-		expect(replayStatsMatch(stats, { ...stats, power_up_collection_counts: { double_gum: 1 } })).toBe(true);
+		expect(replayStatsMatch(stats, { ...stats, game_stats: { ...stats.game_stats, double_gum: 2 } })).toBe(false);
+		expect(replayStatsMatch(stats, { ...stats, game_stats: { ...stats.game_stats, double_gum: 1 } })).toBe(true);
 	});
 
 	it("rejects a duplicate run ID", async () => {

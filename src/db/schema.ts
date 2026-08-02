@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS rulesets (
   game_id TEXT NOT NULL,
   version TEXT NOT NULL,
   eligible_for_leaderboard INTEGER NOT NULL DEFAULT 1 CHECK (eligible_for_leaderboard IN (0, 1)),
+  validator_key TEXT NOT NULL DEFAULT 'generic',
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   UNIQUE (game_id, version),
   FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS runs (
   golden_treat_bonus_points INTEGER NOT NULL DEFAULT 0 CHECK (golden_treat_bonus_points >= 0),
   run_session_id TEXT,
   input_trace TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(input_trace)),
+  game_stats TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(game_stats)),
   UNIQUE (game_id, run_id),
   FOREIGN KEY (game_id, player_id) REFERENCES game_players(game_id, player_id) ON DELETE CASCADE,
   FOREIGN KEY (game_id, ruleset_version) REFERENCES rulesets(game_id, version) ON DELETE RESTRICT
@@ -85,6 +87,9 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS idx_rulesets_game_eligibility
   ON rulesets (game_id, eligible_for_leaderboard, version);
+
+CREATE INDEX IF NOT EXISTS idx_rulesets_validator
+  ON rulesets (game_id, validator_key, version);
 
 CREATE INDEX IF NOT EXISTS idx_game_players_player
   ON game_players (player_id, game_id);

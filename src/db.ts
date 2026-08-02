@@ -40,7 +40,7 @@ export async function getRuleset(
 ): Promise<RulesetRow | null> {
 	return db
 		.prepare(
-			"SELECT id, game_id, version, eligible_for_leaderboard FROM rulesets WHERE game_id = ? AND version = ? LIMIT 1",
+			"SELECT id, game_id, version, eligible_for_leaderboard, validator_key FROM rulesets WHERE game_id = ? AND version = ? LIMIT 1",
 		)
 		.bind(gameId, version)
 		.first<RulesetRow>();
@@ -68,7 +68,7 @@ export async function getRunById(db: D1Database, runId: string): Promise<RunRow 
 				power_up_types_collected, power_up_collection_counts,
 				power_up_activation_counts, shield_breaks, double_gum_boosted_jumps,
 				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points,
-				run_session_id, input_trace
+				run_session_id, input_trace, game_stats
 			 FROM runs WHERE run_id = ? LIMIT 1`,
 		)
 		.bind(runId)

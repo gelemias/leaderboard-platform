@@ -7,6 +7,7 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest run",
+    "deploy:check": "wrangler deploy --dry-run",
     "cf-typegen": "wrangler types",
     "db:migrate": "wrangler d1 migrations apply leaderboard-platform-dev --local",
     "db:seed": "wrangler d1 execute leaderboard-platform-dev --local --file=./seed/development.sql",

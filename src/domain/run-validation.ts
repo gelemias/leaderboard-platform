@@ -14,9 +14,12 @@ function count(values: Record<string, number>, key: string): number {
 	return values[key] ?? 0;
 }
 
-export function validateRunSubmission(run: RunSubmission): string | null {
+export function validateRunSubmission(run: RunSubmission, validatorKey = "generic"): string | null {
 	if (run.run_mode !== "normal") return "Only normal runs may be submitted";
-	if (run.score < 1 || run.jumps < 1) return "Score and jumps must be positive";
+	if (run.score < 1) return "Score must be positive";
+	if (validatorKey === "generic") return null;
+	if (validatorKey !== "jumpy-chewie-2") return `Unknown validator profile: ${validatorKey}`;
+	if (run.jumps < 1) return "Score and jumps must be positive";
 	if (run.score < run.jumps) return "Score cannot be lower than jumps";
 	if (run.near_misses > run.jumps) return "Near misses cannot exceed jumps";
 	if (run.highest_combo > 8) return "Highest combo exceeds the supported limit";
