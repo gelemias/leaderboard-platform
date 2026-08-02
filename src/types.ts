@@ -12,6 +12,7 @@ export type AppEnv = {
 	Bindings: AppBindings;
 	Variables: {
 		mobileAccessToken?: MobileAccessTokenRow;
+		allowImplicitRunPlayer?: boolean;
 	};
 };
 

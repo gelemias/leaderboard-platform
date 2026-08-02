@@ -46,14 +46,18 @@ async function issueRunSessionFor(
 	};
 }
 
-async function issueMobileAccessToken(playerId: string) {
-	const response = await postJson("/v1/mobile/games/api-game/access-tokens", { player_id: playerId });
+async function issueMobileAccessToken(playerId?: string) {
+	const response = await postJson(
+		"/v1/mobile/games/api-game/access-tokens",
+		playerId ? { player_id: playerId } : {},
+	);
 	expect(response.status).toBe(201);
 	return (await response.json()) as {
 		access_token: string;
 		expires_at: number;
 		expires_in: number;
 		player_id: string;
+		name: string;
 	};
 }
 
@@ -396,6 +400,48 @@ describe("leaderboard platform foundation", () => {
 			ok: false,
 			error: { code: "MOBILE_ACCESS_SCOPE_MISMATCH" },
 		});
+	});
+
+	it("provisions a mobile player and derives player identity from the session", async () => {
+		const mobileToken = await issueMobileAccessToken();
+		expect(mobileToken.player_id).toMatch(/^mobile-[0-9a-f-]{36}$/);
+		expect(mobileToken.name).toMatch(/^Mobile [0-9a-f]{8}$/);
+
+		const sessionResponse = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${mobileToken.access_token}`,
+			},
+			body: JSON.stringify({
+				ruleset_version: "api-v1",
+				game_build_version: "mobile-auto-player",
+			}),
+		});
+		expect(sessionResponse.status).toBe(201);
+		const session = (await sessionResponse.json()) as {
+			run_id: string;
+			session_token: string;
+			nonce: string;
+			run_seed: number;
+		};
+
+		const { player_id: _ignoredPlayerId, ...runWithoutPlayerId } = validApiRun(
+			{ ...session, session_token: session.session_token },
+			mobileToken.player_id,
+			10,
+			mobileToken.name,
+		);
+		const submission = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/runs"), {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				...runWithoutPlayerId,
+				game_build_version: "mobile-auto-player",
+			}),
+		});
+		expect(submission.status).toBe(201);
+		expect(await submission.json()).toMatchObject({ ok: true, verification_status: "pending" });
 	});
 
 	it("requires the simulator result to match every submitted statistic", () => {

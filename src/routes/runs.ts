@@ -11,7 +11,11 @@ import {
 import { sha256Hex } from "../crypto";
 import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
-import { runSubmissionRequestSchema, type RunSubmissionRequest } from "../validation/run";
+import {
+	mobileRunSubmissionRequestSchema,
+	runSubmissionRequestSchema,
+	type RunSubmissionRequest,
+} from "../validation/run";
 import { validateRunSubmission } from "../domain/run-validation";
 import { replayStatsMatch } from "../domain/replay-validator";
 import { replayValidatorRegistry } from "../domain/replay-registry";
@@ -68,7 +72,10 @@ function sameRun(existing: Awaited<ReturnType<typeof getRunById>>, incoming: Run
 }
 
 export async function submitRun(c: Context<AppEnv>) {
-	const parsed = runSubmissionRequestSchema.safeParse(await readJson(c));
+	const allowImplicitRunPlayer = c.get("allowImplicitRunPlayer") === true;
+	const parsed = (allowImplicitRunPlayer ? mobileRunSubmissionRequestSchema : runSubmissionRequestSchema).safeParse(
+		await readJson(c),
+	);
 	if (!parsed.success) {
 		return jsonError(c, 422, "INVALID_RUN", "Run submission is invalid", parsed.error.issues);
 	}
@@ -78,7 +85,14 @@ export async function submitRun(c: Context<AppEnv>) {
 	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
-	const incoming = normalizeRunSubmission(parsed.data);
+	const session = await getRunSessionByTokenHash(c.env.DB, await sha256Hex(parsed.data.session_token));
+	if (!session) return jsonError(c, 422, "INVALID_RUN_SESSION", "Run session token is invalid");
+	const playerId = parsed.data.player_id ?? (allowImplicitRunPlayer ? session.player_id : undefined);
+	if (!playerId) return jsonError(c, 422, "INVALID_RUN", "player_id is required for a platform run submission");
+	const incoming = normalizeRunSubmission({
+		...parsed.data,
+		player_id: playerId,
+	} as RunSubmissionRequest);
 	const ruleset = await getRuleset(c.env.DB, game.id, incoming.ruleset_version);
 	if (!ruleset || ruleset.eligible_for_leaderboard !== 1) {
 		return jsonError(c, 422, "INELIGIBLE_RULESET", "Ruleset is not eligible for this leaderboard");
@@ -93,8 +107,6 @@ export async function submitRun(c: Context<AppEnv>) {
 	const validationError = validateRunSubmission({ ...incoming, game_id: game.id }, ruleset.validator_key);
 	if (validationError) return jsonError(c, 422, "INVALID_RUN", validationError);
 
-	const session = await getRunSessionByTokenHash(c.env.DB, await sha256Hex(incoming.session_token));
-	if (!session) return jsonError(c, 422, "INVALID_RUN_SESSION", "Run session token is invalid");
 	if (
 		session.run_id !== incoming.run_id ||
 		session.game_id !== game.id ||

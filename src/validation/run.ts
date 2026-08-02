@@ -41,4 +41,8 @@ export type RunSubmission = z.infer<typeof runSubmissionSchema>;
 
 export const runSubmissionRequestSchema = runSubmissionSchema.omit({ game_id: true });
 
+export const mobileRunSubmissionRequestSchema = runSubmissionRequestSchema.extend({
+	player_id: z.string().min(1).max(128).optional(),
+});
+
 export type RunSubmissionRequest = z.infer<typeof runSubmissionRequestSchema>;

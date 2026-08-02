@@ -9,7 +9,7 @@ import { z } from "zod";
 
 const runSessionRequestSchema = z
 	.object({
-		player_id: z.string().min(1).max(128),
+		player_id: z.string().min(1).max(128).optional(),
 		ruleset_version: z.string().min(1).max(128),
 		game_build_version: z.string().min(1).max(128),
 		run_mode: z.enum(["normal", "tutorial", "practice", "debug", "assisted"]).optional(),
@@ -30,9 +30,13 @@ export async function issueRunSession(c: Context<AppEnv>) {
 	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
-	const { player_id: playerId, ruleset_version: rulesetVersion, game_build_version: gameBuildVersion } =
+	const { player_id: requestedPlayerId, ruleset_version: rulesetVersion, game_build_version: gameBuildVersion } =
 		parsed.data;
 	const mobileAccessToken = c.get("mobileAccessToken");
+	const playerId = requestedPlayerId ?? mobileAccessToken?.player_id;
+	if (!playerId) {
+		return jsonError(c, 422, "INVALID_RUN_SESSION", "player_id is required for a platform run session");
+	}
 	if (
 		mobileAccessToken &&
 		(mobileAccessToken.game_id !== game.id || mobileAccessToken.player_id !== playerId)
