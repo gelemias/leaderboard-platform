@@ -14,6 +14,12 @@ An unregistered simulator returns `pending`. A simulator that rejects the trace
 or produces different statistics returns `rejected`. This is intentionally
 fail-closed.
 
+The local fictional `Cloud Hopper` seed has one reference adapter registered at
+build `reference-1`. Its complete ruleset is intentionally simple: every
+generic `action` input event scores one point, and any other event type is
+rejected. It exists to exercise the generic adapter and acceptance pipeline; it
+is not a production game.
+
 ## Jumpy Chewie adapter requirements
 
 The Jumpy Chewie `jumpy-chewie-2` adapter must return all of its authoritative

@@ -18,6 +18,7 @@ export function validateRunSubmission(run: RunSubmission, validatorKey = "generi
 	if (run.run_mode !== "normal") return "Only normal runs may be submitted";
 	if (run.score < 1) return "Score must be positive";
 	if (validatorKey === "generic") return null;
+	if (validatorKey === "cloud-hopper-reference") return null;
 	if (validatorKey !== "jumpy-chewie-2") return `Unknown validator profile: ${validatorKey}`;
 	if (run.jumps < 1) return "Score and jumps must be positive";
 	if (run.score < run.jumps) return "Score cannot be lower than jumps";

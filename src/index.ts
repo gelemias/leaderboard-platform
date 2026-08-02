@@ -6,6 +6,7 @@ import { playerRoutes } from "./routes/players";
 import { runRoutes } from "./routes/runs";
 import { runSessionRoutes } from "./routes/run-sessions";
 import type { AppEnv } from "./types";
+import "./domain/register-simulators";
 
 const app = new Hono<AppEnv>();
 

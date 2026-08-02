@@ -32,6 +32,8 @@ Submissions now require a short-lived, one-time session bound to the game, playe
 
 The Worker now invokes a ruleset/build-specific simulator registry and compares every score statistic before changing `verification_status` to `accepted`. Unregistered combinations fail closed as `pending`; session tokens and trace validation are evidence and replay resistance, not a substitute for the simulator. The Jumpy Chewie adapter still needs to be ported from the Godot gameplay rules before that game can produce accepted remote scores.
 
+The local `Cloud Hopper` seed includes the first registered reference adapter at build `reference-1`. It treats each generic `action` event as one authoritative point and rejects unsupported event types, so it is useful for exercising the complete acceptance path without pretending to be a production game simulator.
+
 ## Production security configuration
 
 The `/health` endpoint is public. All `/v1/*` routes accept a platform bearer token when `PLATFORM_API_TOKEN` is configured. Set `AUTH_REQUIRED=true` or `ENVIRONMENT=production` in production; if authentication is required but the token is missing, the Worker returns a configuration error instead of serving the API openly.

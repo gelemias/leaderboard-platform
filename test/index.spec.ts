@@ -22,10 +22,15 @@ async function postJson(path: string, body: unknown) {
 	});
 }
 
-async function issueRunSession(playerId: string, gameBuildVersion = "test") {
-	const response = await postJson("/v1/games/api-game/run-sessions", {
+async function issueRunSessionFor(
+	gameSlug: string,
+	playerId: string,
+	rulesetVersion: string,
+	gameBuildVersion: string,
+) {
+	const response = await postJson(`/v1/games/${gameSlug}/run-sessions`, {
 		player_id: playerId,
-		ruleset_version: "api-v1",
+		ruleset_version: rulesetVersion,
 		game_build_version: gameBuildVersion,
 	});
 	expect(response.status).toBe(201);
@@ -37,8 +42,12 @@ async function issueRunSession(playerId: string, gameBuildVersion = "test") {
 	};
 }
 
+async function issueRunSession(playerId: string, gameBuildVersion = "test") {
+	return issueRunSessionFor("api-game", playerId, "api-v1", gameBuildVersion);
+}
+
 function validApiRun(
-	session: { run_id: string; session_token: string; session_nonce: string; run_seed: number },
+	session: { run_id: string; session_token: string; nonce: string; run_seed: number },
 	playerId: string,
 	score: number,
 	name: string,
@@ -537,5 +546,100 @@ describe("leaderboard platform foundation", () => {
 		} finally {
 			replayValidatorRegistry.remove("game-api", "api-v1", "test");
 		}
+	});
+
+	it("accepts only exact replays from the registered Cloud Hopper adapter", async () => {
+		await postJson("/v1/games/cloud-hopper/players", {
+			player_id: "reference-player",
+			display_name: "Reference Player",
+		});
+
+		const session = await issueRunSessionFor(
+			"cloud-hopper",
+			"reference-player",
+			"cloud-hopper-1",
+			"reference-1",
+		);
+		const exactRun = {
+			run_id: session.run_id,
+			player_id: "reference-player",
+			name: "Reference Player",
+			ruleset_version: "cloud-hopper-1",
+			score: 3,
+			run_seed: session.run_seed,
+			run_duration: 1,
+			game_build_version: "reference-1",
+			run_mode: "normal",
+			client_completed_at: now(),
+			game_stats: { actions: 3 },
+			session_token: session.session_token,
+			session_nonce: session.nonce,
+			input_trace: [
+				{ type: "action", t_ms: 100, data: { action: "jump" } },
+				{ type: "action", t_ms: 200, data: { action: "jump" } },
+				{ type: "action", t_ms: 300, data: { action: "jump" } },
+			],
+		};
+
+		const accepted = await postJson("/v1/games/cloud-hopper/runs", exactRun);
+		expect(accepted.status).toBe(201);
+		expect(await accepted.json()).toMatchObject({
+			verification_status: "accepted",
+			verification_code: "REPLAY_VALIDATED",
+		});
+
+		const mismatchSession = await issueRunSessionFor(
+			"cloud-hopper",
+			"reference-player",
+			"cloud-hopper-1",
+			"reference-1",
+		);
+		const mismatched = await postJson("/v1/games/cloud-hopper/runs", {
+			...exactRun,
+			run_id: mismatchSession.run_id,
+			session_token: mismatchSession.session_token,
+			session_nonce: mismatchSession.nonce,
+			run_seed: mismatchSession.run_seed,
+			score: 4,
+			game_stats: { actions: 4 },
+		});
+		expect(mismatched.status).toBe(201);
+		expect(await mismatched.json()).toMatchObject({
+			verification_status: "rejected",
+			verification_code: "REPLAY_VALIDATION_REJECTED",
+		});
+
+		const unsupportedSession = await issueRunSessionFor(
+			"cloud-hopper",
+			"reference-player",
+			"cloud-hopper-1",
+			"reference-1",
+		);
+		const unsupported = await postJson("/v1/games/cloud-hopper/runs", {
+			...exactRun,
+			run_id: unsupportedSession.run_id,
+			session_token: unsupportedSession.session_token,
+			session_nonce: unsupportedSession.nonce,
+			run_seed: unsupportedSession.run_seed,
+			input_trace: [{ type: "pause", t_ms: 100 }],
+			score: 1,
+			game_stats: { actions: 1 },
+		});
+		expect(unsupported.status).toBe(201);
+		expect(await unsupported.json()).toMatchObject({
+			verification_status: "rejected",
+			verification_code: "REPLAY_VALIDATION_REJECTED",
+		});
+
+		const board = await SELF.fetch(
+			apiUrl("/v1/games/cloud-hopper/leaderboards/all_time?ruleset_version=cloud-hopper-1&player_id=reference-player"),
+		);
+		const payload = (await board.json()) as {
+			entries: Array<{ player_id: string; score: number }>;
+		};
+		expect(payload.entries.find((entry) => entry.player_id === "reference-player")).toMatchObject({
+			player_id: "reference-player",
+			score: 3,
+		});
 	});
 });
