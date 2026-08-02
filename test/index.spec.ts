@@ -11,6 +11,7 @@ import {
 	normalizeReplayInputTrace,
 	translateJumpyReplayContract,
 } from "../src/domain/simulators/jumpy-chewie-translation";
+import { revalidatePendingRuns } from "../src/domain/revalidate-pending";
 import { tokenMatches } from "../src/auth";
 import { getRateLimits } from "../src/config";
 
@@ -113,6 +114,7 @@ async function insertRun(
 	playerId: string,
 	rulesetVersion: string,
 	score = 10,
+	verificationStatus = "accepted",
 ) {
 	return env.DB
 		.prepare(
@@ -137,7 +139,7 @@ async function insertRun(
 			"normal",
 			now(),
 			now(),
-			"accepted",
+			verificationStatus,
 		)
 		.run();
 }
@@ -229,7 +231,7 @@ describe("leaderboard platform foundation", () => {
 		});
 	});
 
-	it("seeds Jumpy metadata without enabling unverified scores", async () => {
+	it("seeds Jumpy metadata with trusted mode enabled by default", async () => {
 		const ruleset = await env.DB
 			.prepare("SELECT game_id, version, validator_key FROM rulesets WHERE game_id = ? AND version = ?")
 			.bind("game-jumpy-chewie", "jumpy-chewie-2")
@@ -250,7 +252,7 @@ describe("leaderboard platform foundation", () => {
 					rulesetVersion: "jumpy-chewie-2",
 					gameBuildVersion: "0.1.0",
 				}),
-		).toEqual({ status: "pending", reason: "SIMULATOR_NOT_REGISTERED" });
+		).toMatchObject({ status: "accepted", reason: "TRUSTED_SUBMISSION" });
 	});
 
 	it("issues a hashed, expiring run session", async () => {
@@ -272,7 +274,7 @@ describe("leaderboard platform foundation", () => {
 		expect(stored?.token_hash).not.toBe(session.session_token);
 	});
 
-	it("keeps unimplemented replay verification pending by default", async () => {
+	it("keeps explicit fail-closed replay verification pending", async () => {
 		const result = await new PendingReplayValidator().validate({
 			run: {} as never,
 			inputTrace: [],
@@ -283,7 +285,7 @@ describe("leaderboard platform foundation", () => {
 		expect(result).toEqual({ status: "pending", reason: "SIMULATOR_NOT_REGISTERED" });
 	});
 
-	it("supports generic trace events and production security settings", async () => {
+	it("accepts generic trace events in trusted mode and applies production security settings", async () => {
 		await postJson("/v1/games/api-game/players", {
 			player_id: "api-player-session",
 			display_name: "Session Player",
@@ -295,7 +297,10 @@ describe("leaderboard platform foundation", () => {
 		};
 		const response = await postJson("/v1/games/api-game/runs", genericRun);
 		expect(response.status).toBe(201);
-		expect((await response.json()).verification_status).toBe("pending");
+		expect(await response.json()).toMatchObject({
+			verification_status: "accepted",
+			verification_code: "TRUSTED_SUBMISSION",
+		});
 
 		expect(await tokenMatches("secret", "secret")).toBe(true);
 		expect(await tokenMatches("secret", "different")).toBe(false);
@@ -366,7 +371,8 @@ describe("leaderboard platform foundation", () => {
 		expect(submission.status).toBe(201);
 		expect(await submission.json()).toMatchObject({
 			ok: true,
-			verification_status: "pending",
+			verification_status: "accepted",
+			verification_code: "TRUSTED_SUBMISSION",
 		});
 
 		const replayedToken = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
@@ -441,7 +447,11 @@ describe("leaderboard platform foundation", () => {
 			}),
 		});
 		expect(submission.status).toBe(201);
-		expect(await submission.json()).toMatchObject({ ok: true, verification_status: "pending" });
+		expect(await submission.json()).toMatchObject({
+			ok: true,
+			verification_status: "accepted",
+			verification_code: "TRUSTED_SUBMISSION",
+		});
 	});
 
 	it("binds an explicitly supplied mobile display name through session validation", async () => {
@@ -491,7 +501,11 @@ describe("leaderboard platform foundation", () => {
 			}),
 		});
 		expect(submission.status).toBe(201);
-		expect(await submission.json()).toMatchObject({ ok: true, verification_status: "pending" });
+		expect(await submission.json()).toMatchObject({
+			ok: true,
+			verification_status: "accepted",
+			verification_code: "TRUSTED_SUBMISSION",
+		});
 	});
 
 	it("requires the simulator result to match every submitted statistic", () => {
@@ -581,8 +595,8 @@ describe("leaderboard platform foundation", () => {
 		const response = await postJson("/v1/games/api-game/runs", body);
 		expect(response.status).toBe(201);
 		expect(await response.json()).toMatchObject({
-			verification_status: "pending",
-			verification_code: "REPLAY_VALIDATION_PENDING",
+			verification_status: "accepted",
+			verification_code: "TRUSTED_SUBMISSION",
 		});
 
 		const stored = await env.DB
@@ -762,8 +776,8 @@ describe("leaderboard platform foundation", () => {
 			ok: true,
 			duplicate: false,
 			run_id: body.run_id,
-			verification_status: "pending",
-			verification_code: "REPLAY_VALIDATION_PENDING",
+			verification_status: "accepted",
+			verification_code: "TRUSTED_SUBMISSION",
 		});
 
 		const duplicate = await postJson("/v1/games/api-game/runs", body);
@@ -791,7 +805,7 @@ describe("leaderboard platform foundation", () => {
 			apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1&player_id=api-player-runs"),
 		);
 		expect(board.status).toBe(200);
-		expect((await board.json()).entries).toEqual([]);
+		expect((await board.json()).entries.map((entry: { score: number }) => entry.score)).toEqual([10]);
 	});
 
 	it("binds evidence to its session and rejects malformed replay traces", async () => {
@@ -925,6 +939,38 @@ describe("leaderboard platform foundation", () => {
 				apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1&player_id=api-player-verified"),
 			);
 			expect((await board.json()).entries.map((entry: { score: number }) => entry.score)).toEqual([10]);
+		} finally {
+			replayValidatorRegistry.remove("game-api", "api-v1", "test");
+		}
+	});
+
+	it("revalidates stored pending runs when the simulator becomes available", async () => {
+		await env.DB.batch([
+			env.DB.prepare("INSERT OR IGNORE INTO players (id) VALUES (?)").bind("api-player-revalidation"),
+			env.DB
+				.prepare("INSERT OR IGNORE INTO game_players (game_id, player_id, display_name) VALUES (?, ?, ?)")
+				.bind("game-api", "api-player-revalidation", "Revalidation Player"),
+		]);
+		await insertRun("pending-revalidation-run", "game-api", "api-player-revalidation", "api-v1", 10, "pending");
+		replayValidatorRegistry.register("game-api", "api-v1", "test", {
+			validate: async (input) => ({
+				status: "accepted",
+				reason: "AUTHORITATIVE_REPLAY_MATCH",
+				stats: { score: input.run.score, game_stats: input.run.game_stats },
+			}),
+		});
+
+		try {
+			await expect(revalidatePendingRuns(env.DB, env, 10)).resolves.toMatchObject({
+				processed: 1,
+				accepted: 1,
+				still_pending: 0,
+			});
+			expect(
+				await env.DB.prepare("SELECT verification_status FROM runs WHERE run_id = ?")
+					.bind("pending-revalidation-run")
+					.first(),
+			).toEqual({ verification_status: "accepted" });
 		} finally {
 			replayValidatorRegistry.remove("game-api", "api-v1", "test");
 		}

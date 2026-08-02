@@ -140,15 +140,42 @@ export function normalizeReplayInputTrace(trace: ReplayInputEvent[]): PlatformRe
 	});
 }
 
+export function translatePlatformInputTrace(trace: PlatformReplayInputTrace): JumpyReplayInputTrace {
+	return trace.map((event) => {
+		if (event.type === "swipe" && "direction" in event) {
+			return { type: "swipe", timestamp_ms: event.t_ms, direction: event.direction };
+		}
+		if (event.type === "tap_pickup" && "pickup_id" in event) {
+			const pickupId = Number(event.pickup_id);
+			if (!Number.isInteger(pickupId) || pickupId <= 0) throw new Error("Invalid pickup id");
+			return { type: "pickup_tap", timestamp_ms: event.t_ms, pickup_id: pickupId };
+		}
+		if (event.type === "pause") {
+			return { type: "pause", timestamp_ms: event.t_ms };
+		}
+		if (event.type === "resume") {
+			return { type: "resume", timestamp_ms: event.t_ms };
+		}
+		throw new Error(`Unsupported replay event: ${event.type}`);
+	});
+}
+
 export function normalizeRunSubmission(request: RunSubmissionRequest): NormalizedRunSubmissionRequest {
 	return { ...request, input_trace: normalizeReplayInputTrace(request.input_trace) };
 }
 
-export function replayTimelineDurationMs(request: Pick<RunSubmissionRequest, "run_duration" | "game_stats">): number {
+export function replayActiveDurationMs(request: Pick<RunSubmissionRequest, "run_duration" | "game_stats">): number {
 	const duration = request.game_stats.run_duration_ms;
 	return typeof duration === "number" && Number.isInteger(duration) && duration > 0
 		? duration
 		: request.run_duration * 1000;
+}
+
+export function replayTimelineDurationMs(request: Pick<RunSubmissionRequest, "run_duration" | "game_stats">): number {
+	const activeDuration = replayActiveDurationMs(request);
+	const pausedDuration = request.game_stats.paused_duration_ms;
+	return activeDuration +
+		(typeof pausedDuration === "number" && Number.isInteger(pausedDuration) && pausedDuration > 0 ? pausedDuration : 0);
 }
 
 export { JUMPY_CONTRACT_VERSION, JUMPY_GAME_ID, JUMPY_RULESET_VERSION, JUMPY_TIMESTEP_MS };

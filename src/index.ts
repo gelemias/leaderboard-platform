@@ -6,6 +6,8 @@ import { playerRoutes } from "./routes/players";
 import { runRoutes } from "./routes/runs";
 import { runSessionRoutes } from "./routes/run-sessions";
 import { mobileRoutes } from "./routes/mobile";
+import { replayValidationRoutes } from "./routes/replay-validation";
+import { revalidatePendingRuns } from "./domain/revalidate-pending";
 import type { AppEnv } from "./types";
 import "./domain/register-simulators";
 
@@ -38,5 +40,11 @@ app.route("/v1", runRoutes);
 app.route("/v1", runSessionRoutes);
 app.route("/v1", leaderboardRoutes);
 app.route("/v1", mobileRoutes);
+app.route("/v1", replayValidationRoutes);
 
-export default app satisfies ExportedHandler<Env>;
+export default {
+	fetch: app.fetch,
+	async scheduled(_controller, env, ctx) {
+		ctx.waitUntil(revalidatePendingRuns(env.DB, env, 25));
+	},
+} satisfies ExportedHandler<Env>;

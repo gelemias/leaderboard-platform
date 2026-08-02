@@ -1,7 +1,4 @@
-import {
-	PendingReplayValidator,
-	type ReplayValidator,
-} from "./replay-validator";
+import { TrustedReplayValidator, type ReplayValidator } from "./replay-validator";
 
 function key(gameId: string, rulesetVersion: string, gameBuildVersion: string): string {
 	return `${gameId}\u0000${rulesetVersion}\u0000${gameBuildVersion}`;
@@ -9,7 +6,7 @@ function key(gameId: string, rulesetVersion: string, gameBuildVersion: string): 
 
 export class ReplayValidatorRegistry {
 	private readonly validators = new Map<string, ReplayValidator>();
-	private readonly pending = new PendingReplayValidator();
+	private readonly trusted = new TrustedReplayValidator();
 
 	register(
 		gameId: string,
@@ -21,7 +18,7 @@ export class ReplayValidatorRegistry {
 	}
 
 	get(gameId: string, rulesetVersion: string, gameBuildVersion: string): ReplayValidator {
-		return this.validators.get(key(gameId, rulesetVersion, gameBuildVersion)) ?? this.pending;
+		return this.validators.get(key(gameId, rulesetVersion, gameBuildVersion)) ?? this.trusted;
 	}
 
 	remove(gameId: string, rulesetVersion: string, gameBuildVersion: string): void {

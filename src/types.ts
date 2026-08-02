@@ -1,5 +1,7 @@
 export type AppBindings = Env & {
 	PLATFORM_API_TOKEN?: string;
+	JUMPY_CHEWIE_SIMULATOR_URL?: string;
+	JUMPY_CHEWIE_SIMULATOR_TOKEN?: string;
 	AUTH_REQUIRED?: string;
 	ENVIRONMENT?: string;
 	SESSION_RATE_LIMIT_PER_HOUR?: string;

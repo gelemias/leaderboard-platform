@@ -83,6 +83,27 @@ export async function getRunById(db: D1Database, runId: string): Promise<RunRow 
 		.first<RunRow>();
 }
 
+export async function getPendingRuns(db: D1Database, limit: number): Promise<RunRow[]> {
+	return (
+		await db
+			.prepare(
+				`SELECT run_id, game_id, player_id, ruleset_version, score, jumps, near_misses,
+					highest_combo, run_seed, run_duration, game_build_version, run_mode,
+					client_completed_at, server_received_at, verification_status,
+					power_up_types_collected, power_up_collection_counts,
+					power_up_activation_counts, shield_breaks, double_gum_boosted_jumps,
+					jump_score_points, double_gum_bonus_points, golden_treat_bonus_points,
+					run_session_id, input_trace, game_stats
+				 FROM runs
+				 WHERE verification_status = 'pending'
+				 ORDER BY server_received_at ASC, run_id ASC
+				 LIMIT ?`,
+			)
+			.bind(limit)
+			.all<RunRow>()
+	).results;
+}
+
 export async function getRunSessionByTokenHash(
 	db: D1Database,
 	tokenHash: string,

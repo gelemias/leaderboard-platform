@@ -40,13 +40,22 @@ The first API routes are:
 - `POST /v1/games/:slug/runs` with the validated run payload plus the session's `session_token`, `session_nonce`, `run_id`, `run_seed`, and `input_trace`.
 - `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Platform bearer tokens and game-scoped mobile access tokens are accepted; mobile requests may use only their token's `player_id` for the optional player window. The equivalent `/v1/mobile/games/:slug/leaderboards/:period` path is also supported.
 
-Submissions now require a short-lived, one-time session bound to the game, player, ruleset, build, seed, and run ID. The session token is stored only as a SHA-256 hash. The input trace is bounded, uses monotonic millisecond timestamps, and currently supports swipe, pickup, pause, and resume events. `game_stats` is the canonical game-specific statistics object; the older Jumpy-shaped columns remain as compatibility fields during migration. Structurally valid submissions are stored as `pending` and are excluded from leaderboards until the authoritative replay simulator accepts them. This is deliberate: the platform will not treat client-reported final statistics as proof of a real score.
+Submissions require a short-lived, one-time session bound to the game, player, ruleset, build, seed, and run ID. The session token is stored only as a SHA-256 hash. The input trace is bounded, uses monotonic millisecond timestamps, and currently supports swipe, pickup, pause, and resume events. `game_stats` is the canonical game-specific statistics object; the older Jumpy-shaped columns remain as compatibility fields during migration. By default, structurally valid session-bound submissions are accepted as `TRUSTED_SUBMISSION` and can appear on leaderboards. This protects the API from casual forgery and replay, but does not claim that the game result was independently recomputed.
 
-The Worker now invokes a ruleset/build-specific simulator registry and compares every score statistic before changing `verification_status` to `accepted`. Unregistered combinations fail closed as `pending`; session tokens and trace validation are evidence and replay resistance, not a substitute for the simulator. The Jumpy Chewie adapter still needs to be ported from the Godot gameplay rules before that game can produce accepted remote scores.
+The Worker supports an optional ruleset/build-specific simulator registry. When a registered simulator is configured, the Worker compares every score statistic before changing `verification_status` to `accepted`; unavailable or mismatching simulator results remain pending or rejected. When it is not configured, the platform uses the generic trusted path. Jumpy Chewie is registered against its exact-build simulator service, described in [the simulator service contract](docs/JUMPY_SIMULATOR_SERVICE.md).
 
 The local `Cloud Hopper` seed includes the first registered reference adapter at build `reference-1`. It treats each generic `action` event as one authoritative point and rejects unsupported event types, so it is useful for exercising the complete acceptance path without pretending to be a production game simulator.
 
-The Worker also translates Jumpy Chewie's native replay evidence at the boundary: `timestamp_ms` becomes `t_ms`, `pickup_tap` becomes `tap_pickup`, numeric pickup IDs become strings, and `game_stats.run_duration_ms` bounds paused replay timelines while active `run_duration` remains the stored run duration. This is transport normalization only; Jumpy scores remain pending until its authoritative simulator is registered.
+The Worker also translates Jumpy Chewie's native replay evidence at the boundary: `timestamp_ms` becomes `t_ms`, `pickup_tap` becomes `tap_pickup`, numeric pickup IDs become strings, and paused replay timelines are reconstructed from active duration plus paused duration. This is transport normalization only; when simulator validation is disabled, score acceptance uses the trusted session-bound path.
+
+Jumpy Chewie simulator verification is an opt-in feature flag. If `JUMPY_CHEWIE_SIMULATOR_URL` is absent, Jumpy submissions use trusted mode. If it is set, the Worker sends the replay contract (seed, build, duration, and input trace) and requires a complete canonical `game_stats` object whose score and statistics exactly match the submission. The optional bearer secret is sent only when configured:
+
+```bash
+npx wrangler secret put JUMPY_CHEWIE_SIMULATOR_URL --env production
+npx wrangler secret put JUMPY_CHEWIE_SIMULATOR_TOKEN --env production
+```
+
+Runs left pending while simulator validation is enabled are retried by the five-minute Worker Cron Trigger. An authenticated manual pass is also available at `POST /v1/replay-validation/revalidate?limit=25` using the platform bearer token. Removing the simulator URL switches that game/build back to trusted mode; pending runs are then promoted by the next revalidation pass.
 
 ## Production security configuration
 

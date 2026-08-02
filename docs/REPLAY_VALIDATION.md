@@ -1,18 +1,22 @@
-# Replay validation contract
+# Replay validation and trusted submission contract
 
-The Worker accepts a run only through this sequence:
+The platform supports two verification modes. Every mode begins with the same
+server-issued session boundary:
 
 1. The client requests a short-lived server run session.
 2. The Worker issues a run ID, nonce, seed, ruleset version, and build binding.
 3. The client submits the final statistics and a timestamped input trace.
-4. The Worker resolves a simulator by `(game, ruleset, build)`.
-5. The simulator replays the trace from the issued seed.
-6. The Worker compares `score` and the complete canonical `game_stats` object returned by the simulator.
-7. Only an exact match may be stored as `accepted` and appear on a leaderboard.
 
-An unregistered simulator returns `pending`. A simulator that rejects the trace
-or produces different statistics returns `rejected`. This is intentionally
-fail-closed.
+By default, the Worker stores structurally valid submissions as `accepted` with
+`verification_code: TRUSTED_SUBMISSION`. This is generic across games and
+provides session binding, replay resistance, rate limiting, and input validation,
+but it does not independently recompute the game's score.
+
+An optional simulator can be enabled for a specific game/ruleset/build. The
+Worker then resolves that simulator, replays the trace, compares `score` and
+the complete canonical `game_stats` object, and only accepts an exact match.
+Unavailable simulator calls remain `pending`; rejected traces remain
+`rejected`.
 
 The local fictional `Cloud Hopper` seed has one reference adapter registered at
 build `reference-1`. Its complete ruleset is intentionally simple: every
@@ -34,14 +38,16 @@ platform format before validation and storage:
 | `run_duration_ms` in canonical `game_stats` | replay timeline bound |
 | active `run_duration` | stored run duration |
 
-The translation does not calculate or approve scores. The eventual
-`jumpy-chewie-2` simulator must still reproduce the canonical `game_stats`
-object and exact score before a run can become accepted.
+The translation does not calculate or approve scores. If simulator validation
+is enabled, the `jumpy-chewie-2` simulator must reproduce the canonical
+`game_stats` object and exact score. Otherwise the generic trusted path is used.
 
-The development database includes the Jumpy Chewie game/ruleset metadata, but
-the registry intentionally has no Jumpy validator yet. Requests for that
-combination therefore fail closed as `pending`; adding a fixture lookup or a
-partial score formula here would weaken the anti-cheat boundary.
+The development database includes the Jumpy Chewie game/ruleset metadata, and
+the registry maps its exact `0.1.0` build to the remote simulator adapter. The
+adapter is feature-flagged by `JUMPY_CHEWIE_SIMULATOR_URL`: when absent, the
+trusted path is enabled; when present, simulator validation is enabled. An
+unavailable configured simulator leaves requests pending rather than silently
+falling back to trusted mode.
 
 ## Jumpy Chewie adapter requirements
 
@@ -57,6 +63,7 @@ final statistics:
 - seeded pickup placement, collection, expiry, and activation effects;
 - pause/resume timing and normal-run eligibility.
 
-The existing Worker does not register a partial adapter. Until this contract is
-implemented for a concrete build, those submissions remain pending and cannot
-rank.
+The Worker does not register a partial adapter. The concrete build adapter is
+the exact-build simulator service described in
+[`JUMPY_SIMULATOR_SERVICE.md`](JUMPY_SIMULATOR_SERVICE.md). It is optional and
+can be enabled later without changing the generic leaderboard API.

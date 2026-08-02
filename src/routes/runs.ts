@@ -194,7 +194,9 @@ export async function submitRun(c: Context<AppEnv>) {
 			runSeed: session.run_seed,
 			rulesetVersion: session.ruleset_version,
 			gameBuildVersion: session.game_build_version,
-		});
+		},
+		{ env: c.env },
+	);
 	const verificationStatus =
 		replayResult.status === "accepted" && replayStatsMatch(incoming, replayResult.stats)
 			? "accepted"
@@ -203,7 +205,9 @@ export async function submitRun(c: Context<AppEnv>) {
 				: "pending";
 	const verificationCode =
 		verificationStatus === "accepted"
-			? "REPLAY_VALIDATED"
+			? replayResult.reason === "TRUSTED_SUBMISSION"
+				? "TRUSTED_SUBMISSION"
+				: "REPLAY_VALIDATED"
 			: verificationStatus === "rejected"
 				? "REPLAY_VALIDATION_REJECTED"
 				: "REPLAY_VALIDATION_PENDING";
