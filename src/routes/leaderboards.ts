@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getGameBySlug, getRuleset } from "../db";
+import { consumeRateLimit, getGameBySlug, getRuleset } from "../db";
 import { getPeriodBounds, isLeaderboardPeriod, type LeaderboardPeriod } from "../domain/period";
 import { jsonError } from "../http";
 import type { AppEnv } from "../types";
@@ -40,6 +40,14 @@ leaderboardRoutes.get("/games/:slug/leaderboards/:period", async (c) => {
 	const ruleset = await getRuleset(c.env.DB, game.id, parsed.data.ruleset_version);
 	if (!ruleset || ruleset.eligible_for_leaderboard !== 1) {
 		return jsonError(c, 422, "INELIGIBLE_RULESET", "Ruleset is not eligible for this leaderboard");
+	}
+
+	const rateSubject = parsed.data.player_id ?? c.req.header("CF-Connecting-IP") ?? "anonymous";
+	const rate = await consumeRateLimit(c.env.DB, "refresh", rateSubject, 60, 60);
+	if (!rate.allowed) {
+		return jsonError(c, 429, "RATE_LIMITED", "Too many leaderboard refreshes; try again later", {
+			reset_at: rate.resetAt,
+		});
 	}
 
 	const serverNow = Math.floor(Date.now() / 1000);

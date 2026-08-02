@@ -22,3 +22,7 @@ export const playerRegistrationSchema = z
 	.strict();
 
 export type PlayerRegistration = z.infer<typeof playerRegistrationSchema>;
+
+export const playerNameUpdateSchema = z
+	.object({ display_name: displayNameSchema })
+	.strict();

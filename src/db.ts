@@ -1,6 +1,6 @@
-const REQUIRED_TABLES = ["games", "rulesets", "players", "game_players", "runs"] as const;
-
 import type { GamePlayerRow, GameRow, RulesetRow, RunRow } from "./types";
+
+const REQUIRED_TABLES = ["games", "rulesets", "players", "game_players", "runs", "request_limits"] as const;
 
 export type DatabaseHealth = {
 	available: boolean;
@@ -64,6 +64,49 @@ export async function getRunById(db: D1Database, runId: string): Promise<RunRow 
 		)
 		.bind(runId)
 		.first<RunRow>();
+}
+
+export type RateLimitResult = {
+	allowed: boolean;
+	count: number;
+	limit: number;
+	resetAt: number;
+};
+
+export async function consumeRateLimit(
+	db: D1Database,
+	scope: string,
+	subject: string,
+	limit: number,
+	windowSeconds: number,
+	serverNow = Math.floor(Date.now() / 1000),
+): Promise<RateLimitResult> {
+	const windowStartedAt = serverNow - (serverNow % windowSeconds);
+	const resetAt = windowStartedAt + windowSeconds;
+	const session = db.withSession("first-primary");
+
+	await session
+		.prepare(
+			`INSERT INTO request_limits (scope, subject, window_started_at, request_count)
+			 VALUES (?, ?, ?, 1)
+			 ON CONFLICT (scope, subject) DO UPDATE SET
+				window_started_at = CASE
+					WHEN request_limits.window_started_at = excluded.window_started_at
+					THEN request_limits.window_started_at ELSE excluded.window_started_at END,
+				request_count = CASE
+					WHEN request_limits.window_started_at = excluded.window_started_at
+					THEN request_limits.request_count + 1 ELSE 1 END`,
+		)
+		.bind(scope, subject, windowStartedAt)
+		.run();
+
+	const row = await session
+		.prepare("SELECT request_count FROM request_limits WHERE scope = ? AND subject = ? LIMIT 1")
+		.bind(scope, subject)
+		.first<{ request_count: number }>();
+	const count = row?.request_count ?? 0;
+
+	return { allowed: count <= limit, count, limit, resetAt };
 }
 
 export async function listRequiredTables(db: D1Database): Promise<string[]> {

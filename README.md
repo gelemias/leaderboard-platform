@@ -17,10 +17,11 @@ The Worker is available at `http://localhost:8787/health`.
 The first API routes are:
 
 - `POST /v1/games/:slug/players` with `{ "player_id": "...", "display_name": "..." }` to register or restore a player.
+- `PATCH /v1/games/:slug/players/:playerId` with `{ "display_name": "..." }` to update a player name.
 - `POST /v1/games/:slug/runs` with the validated run payload and `ruleset_version` to accept an idempotent normal run.
 - `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Optional `player_id`, `top_limit`, and `nearby_limit` query parameters return the current player window.
 
-Submission currently performs consistency validation and records accepted normal runs. It is not an anti-cheat replay validator, and authentication/rate limiting are intentionally deferred to the next API milestone.
+Submission currently performs consistency validation and records accepted normal runs. Submission and leaderboard refreshes have persistent D1-backed request windows. This is not an anti-cheat replay validator, and authentication is intentionally deferred until the client/server identity mechanism is chosen.
 
 Run the tests with:
 
@@ -45,6 +46,7 @@ Wrangler persists local D1 data by default. The binding uses the development dat
 - `players`: stable player identity and timestamps.
 - `game_players`: per-game display name and membership, keyed by `(game_id, player_id)`.
 - `runs`: idempotent `run_id`, game/player/ruleset association, score and gameplay statistics, client/server timestamps, verification status, and JSON power-up statistics.
+- `request_limits`: per-scope subject counters used for submission and leaderboard refresh windows.
 
 Runs have composite foreign keys to both `game_players` and `(game_id, ruleset_version)`. This prevents a run from mixing a player or ruleset from another game. Indexes cover ruleset eligibility, player lookup, server receipt order, and accepted-run score ordering.
 
@@ -52,6 +54,6 @@ The development seed creates the fictional `Cloud Hopper` game and its eligible 
 
 ## PostgreSQL migration considerations
 
-The schema deliberately uses application-supplied text IDs, UTC Unix-second timestamps, explicit JSON text for variable power-up statistics, and composite foreign keys. A future PostgreSQL migration should map these to `text` or UUID IDs, `timestamptz` timestamps, `jsonb` statistics, and retain the composite uniqueness/foreign-key relationships. PostgreSQL partial indexes and `CHECK` constraints can carry over directly. The current SQL avoids SQLite-specific query behavior in the application layer, but the migration itself will need PostgreSQL DDL equivalents for `unixepoch()` and SQLite JSON checks.
+The schema deliberately uses application-supplied text IDs, UTC Unix-second timestamps, explicit JSON text for variable power-up statistics, and composite foreign keys. A future PostgreSQL migration should map these to `text` or UUID IDs, `timestamptz` timestamps, `jsonb` statistics, and retain the composite uniqueness/foreign-key relationships. The `request_limits` table can remain a keyed window counter or move to a dedicated rate-limit service. PostgreSQL partial indexes and `CHECK` constraints can carry over directly. The current SQL avoids SQLite-specific query behavior in the application layer, but the migration itself will need PostgreSQL DDL equivalents for `unixepoch()` and SQLite JSON checks.
 
 No remote Cloudflare database or deployment is required for this foundation.

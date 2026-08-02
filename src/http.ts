@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import type { AppEnv } from "./types";
 
-type ErrorStatus = 400 | 404 | 409 | 422 | 500;
+type ErrorStatus = 400 | 404 | 409 | 422 | 429 | 500;
 
 export function jsonError(
 	c: Context<AppEnv>,

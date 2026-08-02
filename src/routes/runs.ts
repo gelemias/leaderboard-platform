@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getGameBySlug, getGamePlayer, getRuleset, getRunById } from "../db";
+import { consumeRateLimit, getGameBySlug, getGamePlayer, getRuleset, getRunById } from "../db";
 import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import { runSubmissionRequestSchema, type RunSubmissionRequest } from "../validation/run";
@@ -87,6 +87,13 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 			run_id: existing.run_id,
 			server_received_at: existing.server_received_at,
 			verification_status: existing.verification_status,
+		});
+	}
+
+	const rate = await consumeRateLimit(c.env.DB, "submission", incoming.player_id, 30, 3600);
+	if (!rate.allowed) {
+		return jsonError(c, 429, "RATE_LIMITED", "Too many submissions; try again later", {
+			reset_at: rate.resetAt,
 		});
 	}
 

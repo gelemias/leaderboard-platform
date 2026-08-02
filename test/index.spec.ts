@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { listRequiredTables, seedDevelopmentGame } from "../src/db";
+import { consumeRateLimit, listRequiredTables, seedDevelopmentGame } from "../src/db";
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -117,9 +117,23 @@ describe("leaderboard platform foundation", () => {
 			"game_players",
 			"games",
 			"players",
+			"request_limits",
 			"rulesets",
 			"runs",
 		]);
+	});
+
+	it("enforces and resets a persistent request window", async () => {
+		const serverNow = 1_800_000_000;
+		const first = await consumeRateLimit(env.DB, "test", "window-subject", 2, 60, serverNow);
+		const second = await consumeRateLimit(env.DB, "test", "window-subject", 2, 60, serverNow + 1);
+		const third = await consumeRateLimit(env.DB, "test", "window-subject", 2, 60, serverNow + 2);
+		const nextWindow = await consumeRateLimit(env.DB, "test", "window-subject", 2, 60, serverNow + 60);
+
+		expect(first).toMatchObject({ allowed: true, count: 1 });
+		expect(second).toMatchObject({ allowed: true, count: 2 });
+		expect(third).toMatchObject({ allowed: false, count: 3 });
+		expect(nextWindow).toMatchObject({ allowed: true, count: 1 });
 	});
 
 	it("contains the development game and ruleset seed", async () => {
@@ -228,6 +242,37 @@ describe("leaderboard platform foundation", () => {
 			name: "Route Player",
 			created: false,
 		});
+	});
+
+	it("updates a player name and rejects a name already used in the game", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-rename",
+			display_name: "Old Player",
+		});
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-rename-other",
+			display_name: "Taken Player",
+		});
+
+		const renamed = await SELF.fetch(apiUrl("/v1/games/api-game/players/api-player-rename"), {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ display_name: "New Player" }),
+		});
+		expect(renamed.status).toBe(200);
+		expect(await renamed.json()).toEqual({
+			ok: true,
+			player_id: "api-player-rename",
+			name: "New Player",
+		});
+
+		const conflict = await SELF.fetch(apiUrl("/v1/games/api-game/players/api-player-rename"), {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ display_name: "Taken Player" }),
+		});
+		expect(conflict.status).toBe(409);
+		expect(await conflict.json()).toMatchObject({ ok: false, error: { code: "PLAYER_NAME_CONFLICT" } });
 	});
 
 	it("accepts a valid run idempotently and rejects a changed duplicate", async () => {
