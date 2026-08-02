@@ -24,7 +24,7 @@ The first API routes are:
 
 Submissions now require a short-lived, one-time session bound to the game, player, ruleset, build, seed, and run ID. The session token is stored only as a SHA-256 hash. The input trace is bounded, uses monotonic millisecond timestamps, and currently supports swipe, pickup, pause, and resume events. Structurally valid submissions are stored as `pending` and are excluded from leaderboards until the authoritative replay simulator accepts them. This is deliberate: the platform will not treat client-reported final statistics as proof of a real score.
 
-The next anti-cheat milestone is the authoritative simulator for each game/ruleset/build. It must replay the trace from the server-issued seed and compare the resulting score/statistics with the submitted values before changing `verification_status` to `accepted`. Session tokens and trace validation are evidence and replay resistance, not a substitute for that simulator.
+The Worker now invokes a ruleset/build-specific simulator registry and compares every score statistic before changing `verification_status` to `accepted`. Unregistered combinations fail closed as `pending`; session tokens and trace validation are evidence and replay resistance, not a substitute for the simulator. The Jumpy Chewie adapter still needs to be ported from the Godot gameplay rules before that game can produce accepted remote scores.
 
 Run the tests with:
 

@@ -1,7 +1,12 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { consumeRateLimit, listRequiredTables, seedDevelopmentGame } from "../src/db";
-import { PendingReplayValidator } from "../src/domain/replay-validator";
+import {
+	PendingReplayValidator,
+	replayStatsMatch,
+	type ReplayStats,
+} from "../src/domain/replay-validator";
+import { replayValidatorRegistry } from "../src/domain/replay-registry";
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -61,6 +66,23 @@ function validApiRun(
 		session_token: session.session_token,
 		session_nonce: session.nonce,
 		input_trace: [{ type: "swipe", t_ms: 100, direction: "right" }],
+	};
+}
+
+function statsForRun(run: ReturnType<typeof validApiRun>): ReplayStats {
+	return {
+		score: run.score,
+		jumps: run.jumps,
+		near_misses: run.near_misses,
+		highest_combo: run.highest_combo,
+		power_up_types_collected: run.power_up_types_collected,
+		power_up_collection_counts: run.power_up_collection_counts,
+		power_up_activation_counts: run.power_up_activation_counts,
+		shield_breaks: run.shield_breaks,
+		double_gum_boosted_jumps: run.double_gum_boosted_jumps,
+		jump_score_points: run.jump_score_points,
+		double_gum_bonus_points: run.double_gum_bonus_points,
+		golden_treat_bonus_points: run.golden_treat_bonus_points,
 	};
 }
 
@@ -212,7 +234,26 @@ describe("leaderboard platform foundation", () => {
 			rulesetVersion: "api-v1",
 			gameBuildVersion: "test",
 		});
-		expect(result).toEqual({ status: "pending", reason: "SIMULATOR_NOT_IMPLEMENTED" });
+		expect(result).toEqual({ status: "pending", reason: "SIMULATOR_NOT_REGISTERED" });
+	});
+
+	it("requires the simulator result to match every submitted statistic", () => {
+		const stats: ReplayStats = {
+			score: 12,
+			jumps: 5,
+			near_misses: 2,
+			highest_combo: 3,
+			power_up_types_collected: ["double_gum"],
+			power_up_collection_counts: { double_gum: 1 },
+			power_up_activation_counts: { double_gum: 1 },
+			shield_breaks: 0,
+			double_gum_boosted_jumps: 5,
+			jump_score_points: 7,
+			double_gum_bonus_points: 5,
+			golden_treat_bonus_points: 0,
+		};
+		expect(replayStatsMatch(stats, { ...stats, power_up_collection_counts: { double_gum: 2 } })).toBe(false);
+		expect(replayStatsMatch(stats, { ...stats, power_up_collection_counts: { double_gum: 1 } })).toBe(true);
 	});
 
 	it("rejects a duplicate run ID", async () => {
@@ -440,5 +481,48 @@ describe("leaderboard platform foundation", () => {
 		);
 		expect(isolated.status).toBe(200);
 		expect((await isolated.json()).entries).toEqual([]);
+	});
+
+	it("promotes only an exact result from a registered simulator", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-verified",
+			display_name: "Verified Player",
+		});
+		const firstSession = await issueRunSession("api-player-verified");
+		const firstRun = validApiRun(firstSession, "api-player-verified", 10, "Verified Player");
+		const authoritativeStats = statsForRun(firstRun);
+
+		replayValidatorRegistry.register("game-api", "api-v1", "test", {
+			validate: async () => ({
+				status: "accepted",
+				reason: "AUTHORITATIVE_REPLAY_MATCH",
+				stats: authoritativeStats,
+			}),
+		});
+
+		try {
+			const accepted = await postJson("/v1/games/api-game/runs", firstRun);
+			expect(accepted.status).toBe(201);
+			expect(await accepted.json()).toMatchObject({
+				verification_status: "accepted",
+				verification_code: "REPLAY_VALIDATED",
+			});
+
+			const secondSession = await issueRunSession("api-player-verified");
+			const mismatchedRun = validApiRun(secondSession, "api-player-verified", 11, "Verified Player");
+			const rejected = await postJson("/v1/games/api-game/runs", mismatchedRun);
+			expect(rejected.status).toBe(201);
+			expect(await rejected.json()).toMatchObject({
+				verification_status: "rejected",
+				verification_code: "REPLAY_VALIDATION_REJECTED",
+			});
+
+			const board = await SELF.fetch(
+				apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1&player_id=api-player-verified"),
+			);
+			expect((await board.json()).entries.map((entry: { score: number }) => entry.score)).toEqual([10]);
+		} finally {
+			replayValidatorRegistry.remove("game-api", "api-v1", "test");
+		}
 	});
 });

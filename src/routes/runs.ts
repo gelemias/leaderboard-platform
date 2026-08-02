@@ -12,6 +12,8 @@ import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import { runSubmissionRequestSchema, type RunSubmissionRequest } from "../validation/run";
 import { validateRunSubmission } from "../domain/run-validation";
+import { replayStatsMatch } from "../domain/replay-validator";
+import { replayValidatorRegistry } from "../domain/replay-registry";
 
 export const runRoutes = new Hono<AppEnv>();
 
@@ -56,8 +58,8 @@ function sameRun(existing: Awaited<ReturnType<typeof getRunById>>, incoming: Run
 		existing.double_gum_boosted_jumps === incoming.double_gum_boosted_jumps &&
 		existing.jump_score_points === incoming.jump_score_points &&
 		existing.double_gum_bonus_points === incoming.double_gum_bonus_points &&
-		existing.golden_treat_bonus_points === incoming.golden_treat_bonus_points
-		&& sameJson(existing.input_trace, incoming.input_trace)
+		existing.golden_treat_bonus_points === incoming.golden_treat_bonus_points &&
+		sameJson(existing.input_trace, incoming.input_trace)
 	);
 }
 
@@ -135,6 +137,28 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 		});
 	}
 
+	const replayResult = await replayValidatorRegistry
+		.get(game.id, incoming.ruleset_version, incoming.game_build_version)
+		.validate({
+			run: { ...incoming, game_id: game.id },
+			inputTrace: incoming.input_trace,
+			runSeed: session.run_seed,
+			rulesetVersion: session.ruleset_version,
+			gameBuildVersion: session.game_build_version,
+		});
+	const verificationStatus =
+		replayResult.status === "accepted" && replayStatsMatch(incoming, replayResult.stats)
+			? "accepted"
+			: replayResult.status === "rejected" || replayResult.status === "accepted"
+				? "rejected"
+				: "pending";
+	const verificationCode =
+		verificationStatus === "accepted"
+			? "REPLAY_VALIDATED"
+			: verificationStatus === "rejected"
+				? "REPLAY_VALIDATION_REJECTED"
+				: "REPLAY_VALIDATION_PENDING";
+
 	const serverReceivedAt = serverNow;
 	try {
 		const results = await c.env.DB.batch([
@@ -164,7 +188,7 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 				incoming.run_mode,
 				incoming.client_completed_at,
 				serverReceivedAt,
-				"pending",
+				verificationStatus,
 				stableJson(incoming.power_up_types_collected),
 				stableJson(incoming.power_up_collection_counts),
 				stableJson(incoming.power_up_activation_counts),
@@ -202,8 +226,8 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 			duplicate: false,
 			run_id: incoming.run_id,
 			server_received_at: serverReceivedAt,
-			verification_status: "pending",
-			verification_code: "REPLAY_VALIDATION_PENDING",
+			verification_status: verificationStatus,
+			verification_code: verificationCode,
 		},
 		201,
 	);
