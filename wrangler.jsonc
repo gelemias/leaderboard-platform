@@ -19,6 +19,23 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	"env": {
+		"production": {
+			"name": "leaderboard-platform",
+			"vars": {
+				"AUTH_REQUIRED": "true",
+				"ENVIRONMENT": "production"
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "leaderboard-platform-prod",
+					"database_id": "31042dd0-8f58-4eb1-8b0d-fa1c0b7b5f20",
+					"migrations_dir": "migrations"
+				}
+			]
+		}
+	},
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"

@@ -15,6 +15,7 @@ import { validateRunSubmission } from "../domain/run-validation";
 import { replayStatsMatch } from "../domain/replay-validator";
 import { replayValidatorRegistry } from "../domain/replay-registry";
 import { getRateLimits } from "../config";
+import { normalizeRunSubmission, replayTimelineDurationMs } from "../domain/simulators/jumpy-chewie-translation";
 
 export const runRoutes = new Hono<AppEnv>();
 
@@ -74,7 +75,7 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 	const game = await getGameBySlug(c.env.DB, c.req.param("slug"));
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
-	const incoming = parsed.data;
+	const incoming = normalizeRunSubmission(parsed.data);
 	const ruleset = await getRuleset(c.env.DB, game.id, incoming.ruleset_version);
 	if (!ruleset || ruleset.eligible_for_leaderboard !== 1) {
 		return jsonError(c, 422, "INELIGIBLE_RULESET", "Ruleset is not eligible for this leaderboard");
@@ -105,7 +106,7 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 
 	const serverNow = Math.floor(Date.now() / 1000);
 	const lastTraceEvent = incoming.input_trace[incoming.input_trace.length - 1];
-	if (lastTraceEvent && lastTraceEvent.t_ms > incoming.run_duration * 1000) {
+	if (lastTraceEvent && lastTraceEvent.t_ms > replayTimelineDurationMs(incoming)) {
 		return jsonError(c, 422, "INVALID_INPUT_TRACE", "Input trace extends beyond the run duration");
 	}
 	if (session.status === "issued" && serverNow > session.expires_at) {

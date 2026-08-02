@@ -11,6 +11,8 @@ const runSessionRequestSchema = z
 		player_id: z.string().min(1).max(128),
 		ruleset_version: z.string().min(1).max(128),
 		game_build_version: z.string().min(1).max(128),
+		run_mode: z.enum(["normal", "tutorial", "practice", "debug", "assisted"]).optional(),
+		simulation_timestep_ms: z.number().int().positive().max(1000).optional(),
 	})
 	.strict();
 

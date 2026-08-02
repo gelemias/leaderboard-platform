@@ -3,14 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --env production",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest run",
-    "deploy:check": "wrangler deploy --dry-run",
+    "deploy:check": "wrangler deploy --dry-run --env production",
     "cf-typegen": "wrangler types",
     "db:migrate": "wrangler d1 migrations apply leaderboard-platform-dev --local",
     "db:seed": "wrangler d1 execute leaderboard-platform-dev --local --file=./seed/development.sql",
+    "db:seed:remote": "wrangler d1 execute leaderboard-platform-prod --remote --env production --file=./seed/production.sql",
+    "db:migrate:remote": "wrangler d1 migrations apply leaderboard-platform-prod --remote --env production",
     "db:inspect": "wrangler d1 execute leaderboard-platform-dev --local --command=\"SELECT name, type FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY type, name;\""
   },
   "devDependencies": {

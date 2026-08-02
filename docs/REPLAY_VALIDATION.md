@@ -20,6 +20,29 @@ generic `action` input event scores one point, and any other event type is
 rejected. It exists to exercise the generic adapter and acceptance pipeline; it
 is not a production game.
 
+## Jumpy Chewie transport translation
+
+Jumpy Chewie's native replay contract is deliberately kept unchanged. At the
+Worker boundary, the adapter translation normalizes its evidence into the
+platform format before validation and storage:
+
+| Jumpy Chewie | Platform canonical form |
+| --- | --- |
+| `timestamp_ms` | `t_ms` |
+| `pickup_tap` | `tap_pickup` |
+| numeric `pickup_id` | string `pickup_id` |
+| `run_duration_ms` in canonical `game_stats` | replay timeline bound |
+| active `run_duration` | stored run duration |
+
+The translation does not calculate or approve scores. The eventual
+`jumpy-chewie-2` simulator must still reproduce the canonical `game_stats`
+object and exact score before a run can become accepted.
+
+The development database includes the Jumpy Chewie game/ruleset metadata, but
+the registry intentionally has no Jumpy validator yet. Requests for that
+combination therefore fail closed as `pending`; adding a fixture lookup or a
+partial score formula here would weaken the anti-cheat boundary.
+
 ## Jumpy Chewie adapter requirements
 
 The Jumpy Chewie `jumpy-chewie-2` adapter must return all of its authoritative

@@ -160,5 +160,22 @@ export async function seedDevelopmentGame(db: D1Database): Promise<void> {
 		db
 			.prepare("UPDATE rulesets SET validator_key = ? WHERE game_id = ? AND version = ?")
 			.bind("cloud-hopper-reference", "game-cloud-hopper", "cloud-hopper-1"),
+		db
+			.prepare(
+				"INSERT OR IGNORE INTO games (id, slug, name, status, created_at) VALUES (?, ?, ?, ?, ?)",
+			)
+			.bind("game-jumpy-chewie", "jumpy-chewie", "Jumpy Chewie", "active", now),
+		db
+			.prepare(
+				"INSERT OR IGNORE INTO rulesets (id, game_id, version, eligible_for_leaderboard, created_at, validator_key) VALUES (?, ?, ?, ?, ?, ?)",
+			)
+			.bind(
+				"ruleset-jumpy-chewie-2",
+				"game-jumpy-chewie",
+				"jumpy-chewie-2",
+				1,
+				now,
+				"jumpy-chewie-2",
+			),
 	]);
 }

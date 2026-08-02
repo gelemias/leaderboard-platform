@@ -19,6 +19,21 @@ const pickupEventSchema = z
 const pauseEventSchema = z.object({ type: z.literal("pause"), t_ms: timestampSchema }).strict();
 const resumeEventSchema = z.object({ type: z.literal("resume"), t_ms: timestampSchema }).strict();
 
+const jumpySwipeEventSchema = z
+	.object({ type: z.literal("swipe"), timestamp_ms: timestampSchema, direction: replayDirectionSchema })
+	.strict();
+
+const jumpyPickupEventSchema = z
+	.object({
+		type: z.literal("pickup_tap"),
+		timestamp_ms: timestampSchema,
+		pickup_id: z.number().int().positive(),
+	})
+	.strict();
+
+const jumpyPauseEventSchema = z.object({ type: z.literal("pause"), timestamp_ms: timestampSchema }).strict();
+const jumpyResumeEventSchema = z.object({ type: z.literal("resume"), timestamp_ms: timestampSchema }).strict();
+
 const genericEventSchema = z
 	.object({
 		type: z.string().min(1).max(64),
@@ -27,7 +42,7 @@ const genericEventSchema = z
 	})
 	.strict();
 
-export const replayInputEventSchema = z.union([
+export const platformReplayInputEventSchema = z.union([
 	swipeEventSchema,
 	pickupEventSchema,
 	pauseEventSchema,
@@ -35,22 +50,43 @@ export const replayInputEventSchema = z.union([
 	genericEventSchema,
 ]);
 
+export const jumpyReplayInputEventSchema = z.union([
+	jumpySwipeEventSchema,
+	jumpyPickupEventSchema,
+	jumpyPauseEventSchema,
+	jumpyResumeEventSchema,
+]);
+
+export const replayInputEventSchema = z.union([
+	platformReplayInputEventSchema,
+	jumpyReplayInputEventSchema,
+]);
+
+function eventTimestamp(event: z.infer<typeof replayInputEventSchema>): number {
+	return "t_ms" in event ? event.t_ms : event.timestamp_ms;
+}
+
 export const replayInputTraceSchema = z
 	.array(replayInputEventSchema)
 	.max(10_000)
 	.superRefine((events, context) => {
 		let previousTimestamp = -1;
 		for (const [index, event] of events.entries()) {
-			if (event.t_ms < previousTimestamp) {
+			const timestamp = eventTimestamp(event);
+			if (timestamp < previousTimestamp) {
 				context.addIssue({
 					code: "custom",
-					path: [index, "t_ms"],
+					path: [index, "t_ms" in event ? "t_ms" : "timestamp_ms"],
 					message: "Input trace timestamps must be monotonic",
 				});
 			}
-			previousTimestamp = event.t_ms;
+			previousTimestamp = timestamp;
 		}
 	});
 
 export type ReplayInputEvent = z.infer<typeof replayInputEventSchema>;
 export type ReplayInputTrace = z.infer<typeof replayInputTraceSchema>;
+export type PlatformReplayInputEvent = z.infer<typeof platformReplayInputEventSchema>;
+export type PlatformReplayInputTrace = PlatformReplayInputEvent[];
+export type JumpyReplayInputEvent = z.infer<typeof jumpyReplayInputEventSchema>;
+export type JumpyReplayInputTrace = JumpyReplayInputEvent[];

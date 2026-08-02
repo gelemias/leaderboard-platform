@@ -20,11 +20,20 @@ Validate the deploy bundle without uploading it:
 npm run deploy:check
 ```
 
+The production deployment uses the separately configured remote D1 database. Apply its migrations before the first deployment:
+
+```bash
+npm run db:migrate:remote
+npm run db:seed:remote
+npx wrangler secret put PLATFORM_API_TOKEN --env production
+npm run deploy
+```
+
 The first API routes are:
 
-- `POST /v1/games/:slug/players` with `{ "player_id": "...", "display_name": "..." }` to register or restore a player.
-- `PATCH /v1/games/:slug/players/:playerId` with `{ "display_name": "..." }` to update a player name.
-- `POST /v1/games/:slug/run-sessions` with `player_id`, `ruleset_version`, and `game_build_version` to receive a one-time server-issued run session.
+- `POST /v1/games/:slug/players` with `{ "player_id": "...", "name": "..." }` to register or restore a player. `display_name` is accepted as the platform-native alias.
+- `PATCH /v1/games/:slug/players/:playerId` with `{ "name": "..." }` to update a player name. `display_name` is accepted as the platform-native alias.
+- `POST /v1/games/:slug/run-sessions` with `player_id`, `ruleset_version`, and `game_build_version` to receive a one-time server-issued run session. Game adapters may also send `run_mode` and `simulation_timestep_ms` as simulator contract metadata.
 - `POST /v1/games/:slug/runs` with the validated run payload plus the session's `session_token`, `session_nonce`, `run_id`, `run_seed`, and `input_trace`.
 - `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Optional `player_id`, `top_limit`, and `nearby_limit` query parameters return the current player window.
 
@@ -33,6 +42,8 @@ Submissions now require a short-lived, one-time session bound to the game, playe
 The Worker now invokes a ruleset/build-specific simulator registry and compares every score statistic before changing `verification_status` to `accepted`. Unregistered combinations fail closed as `pending`; session tokens and trace validation are evidence and replay resistance, not a substitute for the simulator. The Jumpy Chewie adapter still needs to be ported from the Godot gameplay rules before that game can produce accepted remote scores.
 
 The local `Cloud Hopper` seed includes the first registered reference adapter at build `reference-1`. It treats each generic `action` event as one authoritative point and rejects unsupported event types, so it is useful for exercising the complete acceptance path without pretending to be a production game simulator.
+
+The Worker also translates Jumpy Chewie's native replay evidence at the boundary: `timestamp_ms` becomes `t_ms`, `pickup_tap` becomes `tap_pickup`, numeric pickup IDs become strings, and `game_stats.run_duration_ms` bounds paused replay timelines while active `run_duration` remains the stored run duration. This is transport normalization only; Jumpy scores remain pending until its authoritative simulator is registered.
 
 ## Production security configuration
 
@@ -67,7 +78,7 @@ npx wrangler d1 execute leaderboard-platform-dev --local --command="SELECT * FRO
 npx wrangler d1 execute leaderboard-platform-dev --local --command="SELECT * FROM rulesets;"
 ```
 
-Wrangler persists local D1 data by default. The binding uses the development database name `leaderboard-platform-dev`, a local preview ID, and a placeholder database ID so no remote D1 database is created by this project. Keep `--local` on every local migration or execute command.
+Wrangler persists local D1 data by default. The default binding uses the development database name `leaderboard-platform-dev`, a local preview ID, and a placeholder database ID. The `production` environment uses the remote database `leaderboard-platform-prod`. Keep `--local` on local migration or execute commands and use `--remote` only deliberately.
 
 ## Local schema
 
@@ -81,14 +92,14 @@ Wrangler persists local D1 data by default. The binding uses the development dat
 
 Runs have composite foreign keys to both `game_players` and `(game_id, ruleset_version)`. This prevents a run from mixing a player or ruleset from another game. Indexes cover ruleset eligibility/validator selection, player lookup, server receipt order, and accepted-run score ordering.
 
-The development seed creates the fictional `Cloud Hopper` game and its eligible `cloud-hopper-1` ruleset. The seed is idempotent and can be run again with `npm run db:seed`.
+The development seed creates the fictional `Cloud Hopper` reference game and the `Jumpy Chewie` `jumpy-chewie-2` metadata. Cloud Hopper can accept its local reference replays; Jumpy Chewie remains `pending` until its exact simulator is ported and registered. The seed is idempotent and can be run again with `npm run db:seed`.
 
 ## PostgreSQL migration considerations
 
 The schema deliberately uses application-supplied text IDs, UTC Unix-second timestamps, explicit JSON text for variable power-up statistics and input traces, and composite foreign keys. A future PostgreSQL migration should map these to `text` or UUID IDs, `timestamptz` timestamps, `jsonb` statistics/traces, and retain the composite uniqueness/foreign-key relationships. Keep `token_hash` indexed and unique; never migrate or store the plaintext session token. The `request_limits` table can remain a keyed window counter or move to a dedicated rate-limit service. PostgreSQL partial indexes and `CHECK` constraints can carry over directly. The current SQL avoids SQLite-specific query behavior in the application layer, but the migration itself will need PostgreSQL DDL equivalents for `unixepoch()` and SQLite JSON checks.
 
-No remote Cloudflare database or deployment is required for this foundation.
+The remote production D1 database has been created, but it is not populated or deployed until the explicit remote migration, production metadata seed, and deployment commands above are run. The production seed contains only the Jumpy Chewie game/ruleset metadata; it contains no players or scores.
 
 ## Deployment readiness
 
-Deployment is intentionally not included in local setup. A real production D1 database ID must be placed in a production Wrangler environment, and `PLATFORM_API_TOKEN` must be configured as a Worker secret before deploying. Do not replace the development placeholder database ID in the default local configuration with a guessed value.
+Deployment is intentionally separate from local setup. The production environment contains the real D1 database ID, and `PLATFORM_API_TOKEN` must be configured as a Worker secret before deploying. Do not replace the development placeholder database ID in the default local configuration.

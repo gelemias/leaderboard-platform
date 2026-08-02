@@ -7,6 +7,10 @@ import {
 	type ReplayStats,
 } from "../src/domain/replay-validator";
 import { replayValidatorRegistry } from "../src/domain/replay-registry";
+import {
+	normalizeReplayInputTrace,
+	translateJumpyReplayContract,
+} from "../src/domain/simulators/jumpy-chewie-translation";
 import { tokenMatches } from "../src/auth";
 import { getRateLimits } from "../src/config";
 
@@ -209,6 +213,30 @@ describe("leaderboard platform foundation", () => {
 		});
 	});
 
+	it("seeds Jumpy metadata without enabling unverified scores", async () => {
+		const ruleset = await env.DB
+			.prepare("SELECT game_id, version, validator_key FROM rulesets WHERE game_id = ? AND version = ?")
+			.bind("game-jumpy-chewie", "jumpy-chewie-2")
+			.first();
+
+		expect(ruleset).toEqual({
+			game_id: "game-jumpy-chewie",
+			version: "jumpy-chewie-2",
+			validator_key: "jumpy-chewie-2",
+		});
+		expect(
+			await replayValidatorRegistry
+				.get("game-jumpy-chewie", "jumpy-chewie-2", "0.1.0")
+				.validate({
+					run: {} as never,
+					inputTrace: [],
+					runSeed: 1,
+					rulesetVersion: "jumpy-chewie-2",
+					gameBuildVersion: "0.1.0",
+				}),
+		).toEqual({ status: "pending", reason: "SIMULATOR_NOT_REGISTERED" });
+	});
+
 	it("issues a hashed, expiring run session", async () => {
 		await postJson("/v1/games/api-game/players", {
 			player_id: "api-player-session",
@@ -276,6 +304,99 @@ describe("leaderboard platform foundation", () => {
 		};
 		expect(replayStatsMatch(stats, { ...stats, game_stats: { ...stats.game_stats, double_gum: 2 } })).toBe(false);
 		expect(replayStatsMatch(stats, { ...stats, game_stats: { ...stats.game_stats, double_gum: 1 } })).toBe(true);
+	});
+
+	it("translates the Jumpy replay contract into platform replay evidence", () => {
+		const translated = translateJumpyReplayContract({
+			contract_version: 1,
+			game_id: "jumpy-chewie",
+			ruleset_version: "jumpy-chewie-2",
+			game_build_version: "0.1.0",
+			run_seed: 7,
+			run_mode: "normal",
+			simulation_timestep_ms: 8,
+			run_duration_ms: 40,
+			input_trace: [
+				{ type: "swipe", timestamp_ms: 0, direction: "up" },
+				{ type: "pickup_tap", timestamp_ms: 8, pickup_id: 12 },
+				{ type: "pause", timestamp_ms: 16 },
+				{ type: "resume", timestamp_ms: 24 },
+			],
+		});
+
+		expect(translated).toMatchObject({ ok: true });
+		if (!translated.ok) return;
+		expect(translated.replay.replayDurationMs).toBe(40);
+		expect(translated.replay.inputTrace).toEqual([
+			{ type: "swipe", t_ms: 0, direction: "up" },
+			{ type: "tap_pickup", t_ms: 8, pickup_id: "12" },
+			{ type: "pause", t_ms: 16 },
+			{ type: "resume", t_ms: 24 },
+		]);
+
+		const normalized = normalizeReplayInputTrace([
+			{ type: "swipe", timestamp_ms: 0, direction: "up" },
+			{ type: "action", t_ms: 8, data: { action: "jump" } },
+		]);
+		expect(normalized).toEqual([
+			{ type: "swipe", t_ms: 0, direction: "up" },
+			{ type: "action", t_ms: 8, data: { action: "jump" } },
+		]);
+	});
+
+	it("rejects invalid Jumpy replay contract timing and pause transitions", () => {
+		const result = translateJumpyReplayContract({
+			contract_version: 1,
+			game_id: "jumpy-chewie",
+			ruleset_version: "jumpy-chewie-2",
+			game_build_version: "0.1.0",
+			run_seed: 7,
+			run_mode: "normal",
+			simulation_timestep_ms: 8,
+			run_duration_ms: 32,
+			input_trace: [
+				{ type: "pause", timestamp_ms: 8 },
+				{ type: "pause", timestamp_ms: 16 },
+			],
+		});
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.issues.map((issue) => issue.message)).toContain("run cannot pause while already paused");
+	});
+
+	it("normalizes Jumpy-shaped evidence before storing a run", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-jumpy-translation",
+			display_name: "Jumpy Translate",
+		});
+		const session = await issueRunSession("api-player-jumpy-translation");
+		const body = {
+			...validApiRun(session, "api-player-jumpy-translation", 10, "Jumpy Translate"),
+			run_duration: 1,
+			game_stats: { run_duration_ms: 2400, score: 10 },
+			input_trace: [
+				{ type: "swipe", timestamp_ms: 0, direction: "right" },
+				{ type: "pickup_tap", timestamp_ms: 1600, pickup_id: 7 },
+			],
+		};
+
+		const response = await postJson("/v1/games/api-game/runs", body);
+		expect(response.status).toBe(201);
+		expect(await response.json()).toMatchObject({
+			verification_status: "pending",
+			verification_code: "REPLAY_VALIDATION_PENDING",
+		});
+
+		const stored = await env.DB
+			.prepare("SELECT run_duration, input_trace FROM runs WHERE run_id = ?")
+			.bind(body.run_id)
+			.first<{ run_duration: number; input_trace: string }>();
+		expect(stored?.run_duration).toBe(1);
+		expect(JSON.parse(stored?.input_trace ?? "[]")).toEqual([
+			{ type: "swipe", t_ms: 0, direction: "right" },
+			{ type: "tap_pickup", t_ms: 1600, pickup_id: "7" },
+		]);
 	});
 
 	it("rejects a duplicate run ID", async () => {
@@ -360,6 +481,42 @@ describe("leaderboard platform foundation", () => {
 			player_id: "api-player-restore",
 			name: "Route Player",
 			created: false,
+		});
+	});
+
+	it("accepts the completed game's player and run-session payloads", async () => {
+		const created = await postJson("/v1/games/jumpy-chewie/players", {
+			player_id: "jumpy-http-contract-player",
+			name: "Jumpy Contract",
+		});
+		expect(created.status).toBe(201);
+		expect(await created.json()).toEqual({
+			ok: true,
+			player_id: "jumpy-http-contract-player",
+			name: "Jumpy Contract",
+			created: true,
+		});
+
+		const renamed = await SELF.fetch(apiUrl("/v1/games/jumpy-chewie/players/jumpy-http-contract-player"), {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name: "Jumpy Renamed" }),
+		});
+		expect(renamed.status).toBe(200);
+		expect(await renamed.json()).toMatchObject({ name: "Jumpy Renamed" });
+
+		const session = await postJson("/v1/games/jumpy-chewie/run-sessions", {
+			player_id: "jumpy-http-contract-player",
+			ruleset_version: "jumpy-chewie-2",
+			game_build_version: "0.1.0",
+			run_mode: "normal",
+			simulation_timestep_ms: 8,
+		});
+		expect(session.status).toBe(201);
+		expect(await session.json()).toMatchObject({
+			ok: true,
+			ruleset_version: "jumpy-chewie-2",
+			game_build_version: "0.1.0",
 		});
 	});
 
