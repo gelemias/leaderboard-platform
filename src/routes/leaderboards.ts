@@ -25,7 +25,7 @@ type LeaderboardRow = {
 
 export const leaderboardRoutes = new Hono<AppEnv>();
 
-async function getLeaderboard(c: Context<AppEnv>) {
+export async function getLeaderboard(c: Context<AppEnv>) {
 	const periodParam = c.req.param("period");
 	const slug = c.req.param("slug");
 	if (!periodParam || !isLeaderboardPeriod(periodParam)) {

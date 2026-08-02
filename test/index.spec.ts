@@ -231,6 +231,31 @@ describe("leaderboard platform foundation", () => {
 		});
 	});
 
+	it("exposes a generic public game catalog and leaderboard read API", async () => {
+		const catalog = await SELF.fetch("https://example.com/v1/public/games");
+		expect(catalog.status).toBe(200);
+		expect(await catalog.json()).toMatchObject({
+			ok: true,
+			games: expect.arrayContaining([
+				expect.objectContaining({
+					slug: "jumpy-chewie",
+					name: "Jumpy Chewie",
+					rulesets: [{ version: "jumpy-chewie-2" }],
+				}),
+			]),
+		});
+
+		const leaderboard = await SELF.fetch(
+			"https://example.com/v1/public/games/jumpy-chewie/leaderboards/all_time?ruleset_version=jumpy-chewie-2",
+		);
+		expect(leaderboard.status).toBe(200);
+		expect(await leaderboard.json()).toMatchObject({
+			ok: true,
+			ruleset: "jumpy-chewie-2",
+			entries: expect.any(Array),
+		});
+	});
+
 	it("seeds Jumpy metadata with trusted mode enabled by default", async () => {
 		const ruleset = await env.DB
 			.prepare("SELECT game_id, version, validator_key FROM rulesets WHERE game_id = ? AND version = ?")

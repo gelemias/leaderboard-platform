@@ -39,6 +39,10 @@ The first API routes are:
 - `POST /v1/mobile/games/:slug/runs` with the run payload plus the issued `session_token` and `session_nonce`. `player_id` is optional for this mobile route and is derived from the one-time session. This route is intentionally bearerless; the one-time session is the submission credential.
 - `POST /v1/games/:slug/runs` with the validated run payload plus the session's `session_token`, `session_nonce`, `run_id`, `run_seed`, and `input_trace`.
 - `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Platform bearer tokens and game-scoped mobile access tokens are accepted; mobile requests may use only their token's `player_id` for the optional player window. The equivalent `/v1/mobile/games/:slug/leaderboards/:period` path is also supported.
+- `GET /v1/public/games` returns the active game catalog and leaderboard-eligible rulesets without exposing platform credentials.
+- `GET /v1/public/games/:slug/leaderboards/:period?ruleset_version=...` returns a public, read-only leaderboard feed for the dashboard.
+
+The same Worker deployment also serves the static dashboard at `/`. It discovers games and rulesets through the public catalog API, so adding another active game does not require frontend code changes.
 
 Submissions require a short-lived, one-time session bound to the game, player, ruleset, build, seed, and run ID. The session token is stored only as a SHA-256 hash. The input trace is bounded, uses monotonic millisecond timestamps, and currently supports swipe, pickup, pause, and resume events. `game_stats` is the canonical game-specific statistics object; the older Jumpy-shaped columns remain as compatibility fields during migration. By default, structurally valid session-bound submissions are accepted as `TRUSTED_SUBMISSION` and can appear on leaderboards. This protects the API from casual forgery and replay, but does not claim that the game result was independently recomputed.
 

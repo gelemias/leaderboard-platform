@@ -7,6 +7,7 @@ import { runRoutes } from "./routes/runs";
 import { runSessionRoutes } from "./routes/run-sessions";
 import { mobileRoutes } from "./routes/mobile";
 import { replayValidationRoutes } from "./routes/replay-validation";
+import { publicRoutes } from "./routes/public";
 import { revalidatePendingRuns } from "./domain/revalidate-pending";
 import type { AppEnv } from "./types";
 import "./domain/register-simulators";
@@ -32,7 +33,9 @@ app.use("/v1/*", async (c, next) => {
 		pathname,
 	);
 	const isLeaderboardRoute = /^\/v1\/games\/[^/]+\/leaderboards\/[^/]+$/.test(pathname);
-	return isMobileBrokerRoute || isLeaderboardRoute ? next() : requirePlatformAuth(c, next);
+	const isPublicReadRoute =
+		pathname === "/v1/public/games" || /^\/v1\/public\/games\/[^/]+\/leaderboards\/[^/]+$/.test(pathname);
+	return isMobileBrokerRoute || isLeaderboardRoute || isPublicReadRoute ? next() : requirePlatformAuth(c, next);
 });
 
 app.route("/v1", playerRoutes);
@@ -41,9 +44,18 @@ app.route("/v1", runSessionRoutes);
 app.route("/v1", leaderboardRoutes);
 app.route("/v1", mobileRoutes);
 app.route("/v1", replayValidationRoutes);
+app.route("/v1", publicRoutes);
+
+function isWorkerRoute(pathname: string): boolean {
+	return pathname === "/health" || pathname === "/v1" || pathname.startsWith("/v1/");
+}
 
 export default {
-	fetch: app.fetch,
+	async fetch(request, env, ctx) {
+		return isWorkerRoute(new URL(request.url).pathname)
+			? app.fetch(request, env, ctx)
+			: env.ASSETS.fetch(request);
+	},
 	async scheduled(_controller, env, ctx) {
 		ctx.waitUntil(revalidatePendingRuns(env.DB, env, 25));
 	},
