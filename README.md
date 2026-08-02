@@ -1,6 +1,6 @@
 # Leaderboard Platform
 
-This is an independent Cloudflare Workers leaderboard foundation. It currently exposes only a health endpoint and a local D1-backed schema; score submission and ranking APIs are intentionally not implemented yet.
+This is an independent Cloudflare Workers leaderboard foundation with a local D1-backed schema, health endpoint, player registration, validated run submission, and leaderboard reads.
 
 ## Setup and local development
 
@@ -13,6 +13,14 @@ npm run dev
 ```
 
 The Worker is available at `http://localhost:8787/health`.
+
+The first API routes are:
+
+- `POST /v1/games/:slug/players` with `{ "player_id": "...", "display_name": "..." }` to register or restore a player.
+- `POST /v1/games/:slug/runs` with the validated run payload and `ruleset_version` to accept an idempotent normal run.
+- `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Optional `player_id`, `top_limit`, and `nearby_limit` query parameters return the current player window.
+
+Submission currently performs consistency validation and records accepted normal runs. It is not an anti-cheat replay validator, and authentication/rate limiting are intentionally deferred to the next API milestone.
 
 Run the tests with:
 

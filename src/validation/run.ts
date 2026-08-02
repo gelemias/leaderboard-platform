@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { displayNameSchema } from "./player";
 
 const nonNegativeInteger = z.number().int().nonnegative();
 const powerUpCounts = z.record(z.string(), nonNegativeInteger);
@@ -8,6 +9,7 @@ export const runSubmissionSchema = z
 		run_id: z.string().min(1).max(128),
 		game_id: z.string().min(1).max(128),
 		player_id: z.string().min(1).max(128),
+		name: displayNameSchema,
 		ruleset_version: z.string().min(1).max(128),
 		score: nonNegativeInteger,
 		jumps: nonNegativeInteger,
@@ -30,3 +32,7 @@ export const runSubmissionSchema = z
 	.strict();
 
 export type RunSubmission = z.infer<typeof runSubmissionSchema>;
+
+export const runSubmissionRequestSchema = runSubmissionSchema.omit({ game_id: true });
+
+export type RunSubmissionRequest = z.infer<typeof runSubmissionRequestSchema>;

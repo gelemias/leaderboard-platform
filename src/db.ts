@@ -1,5 +1,7 @@
 const REQUIRED_TABLES = ["games", "rulesets", "players", "game_players", "runs"] as const;
 
+import type { GamePlayerRow, GameRow, RulesetRow, RunRow } from "./types";
+
 export type DatabaseHealth = {
 	available: boolean;
 	message?: string;
@@ -14,6 +16,54 @@ export async function checkDatabase(db: D1Database): Promise<DatabaseHealth> {
 	} catch {
 		return { available: false, message: "D1 is unavailable" };
 	}
+}
+
+export async function getGameBySlug(db: D1Database, slug: string): Promise<GameRow | null> {
+	return db
+		.prepare("SELECT id, slug, name, status FROM games WHERE slug = ? LIMIT 1")
+		.bind(slug)
+		.first<GameRow>();
+}
+
+export async function getRuleset(
+	db: D1Database,
+	gameId: string,
+	version: string,
+): Promise<RulesetRow | null> {
+	return db
+		.prepare(
+			"SELECT id, game_id, version, eligible_for_leaderboard FROM rulesets WHERE game_id = ? AND version = ? LIMIT 1",
+		)
+		.bind(gameId, version)
+		.first<RulesetRow>();
+}
+
+export async function getGamePlayer(
+	db: D1Database,
+	gameId: string,
+	playerId: string,
+): Promise<GamePlayerRow | null> {
+	return db
+		.prepare(
+			"SELECT game_id, player_id, display_name FROM game_players WHERE game_id = ? AND player_id = ? LIMIT 1",
+		)
+		.bind(gameId, playerId)
+		.first<GamePlayerRow>();
+}
+
+export async function getRunById(db: D1Database, runId: string): Promise<RunRow | null> {
+	return db
+		.prepare(
+			`SELECT run_id, game_id, player_id, ruleset_version, score, jumps, near_misses,
+				highest_combo, run_seed, run_duration, game_build_version, run_mode,
+				client_completed_at, server_received_at, verification_status,
+				power_up_types_collected, power_up_collection_counts,
+				power_up_activation_counts, shield_breaks, double_gum_boosted_jumps,
+				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points
+			 FROM runs WHERE run_id = ? LIMIT 1`,
+		)
+		.bind(runId)
+		.first<RunRow>();
 }
 
 export async function listRequiredTables(db: D1Database): Promise<string[]> {
