@@ -10,6 +10,15 @@
 	"observability": {
 		"enabled": true
 	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "leaderboard-platform-dev",
+			"database_id": "00000000-0000-0000-0000-000000000001",
+			"preview_database_id": "leaderboard-platform-dev-local",
+			"migrations_dir": "migrations"
+		}
+	],
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"

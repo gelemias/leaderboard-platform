@@ -6,8 +6,11 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "test": "vitest",
-    "cf-typegen": "wrangler types"
+    "test": "vitest run",
+    "cf-typegen": "wrangler types",
+    "db:migrate": "wrangler d1 migrations apply leaderboard-platform-dev --local",
+    "db:seed": "wrangler d1 execute leaderboard-platform-dev --local --file=./seed/development.sql",
+    "db:inspect": "wrangler d1 execute leaderboard-platform-dev --local --command=\"SELECT name, type FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY type, name;\""
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
@@ -15,5 +18,9 @@
     "typescript": "^5.5.2",
     "vitest": "~3.2.0",
     "wrangler": "^4.118.0"
+  },
+  "dependencies": {
+    "hono": "^4.12.33",
+    "zod": "^4.4.3"
   }
 }
