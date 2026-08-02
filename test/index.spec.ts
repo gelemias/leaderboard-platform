@@ -780,6 +780,12 @@ describe("leaderboard platform foundation", () => {
 			run_mode: "tutorial",
 		});
 		expect(tutorial.status).toBe(422);
+		expect(await tutorial.json()).toMatchObject({
+			error: {
+				message: "Only normal runs may be submitted",
+				details: { phase: "run_validator", validator_key: "generic" },
+			},
+		});
 
 		const board = await SELF.fetch(
 			apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1&player_id=api-player-runs"),
@@ -857,6 +863,28 @@ describe("leaderboard platform foundation", () => {
 		);
 		expect(isolated.status).toBe(200);
 		expect((await isolated.json()).entries).toEqual([]);
+	});
+
+	it("accepts a mobile access token for leaderboard reads", async () => {
+		const playerId = "mobile-board-player";
+		const tokenResponse = await postJson("/v1/mobile/games/api-game/access-tokens", {
+			player_id: playerId,
+			display_name: "Board Player",
+		});
+		expect(tokenResponse.status).toBe(201);
+		const token = (await tokenResponse.json()) as { access_token: string };
+		await insertRun("mobile-board-run", "game-api", playerId, "api-v1", 41);
+
+		const response = await SELF.fetch(
+			apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1&player_id=mobile-board-player"),
+			{
+				headers: { Authorization: `Bearer ${token.access_token}` },
+			},
+		);
+		expect(response.status).toBe(200);
+		expect((await response.json()).entries).toMatchObject([
+			{ player_id: playerId, name: "Board Player", score: 41 },
+		]);
 	});
 
 	it("promotes only an exact result from a registered simulator", async () => {

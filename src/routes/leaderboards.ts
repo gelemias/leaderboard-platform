@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
+import { requirePlatformOrMobileAuth } from "../auth";
 import { consumeRateLimit, getGameBySlug, getRuleset } from "../db";
 import { getPeriodBounds, isLeaderboardPeriod, type LeaderboardPeriod } from "../domain/period";
 import { jsonError } from "../http";
@@ -23,11 +25,13 @@ type LeaderboardRow = {
 
 export const leaderboardRoutes = new Hono<AppEnv>();
 
-leaderboardRoutes.get("/games/:slug/leaderboards/:period", async (c) => {
+async function getLeaderboard(c: Context<AppEnv>) {
 	const periodParam = c.req.param("period");
-	if (!isLeaderboardPeriod(periodParam)) {
+	const slug = c.req.param("slug");
+	if (!periodParam || !isLeaderboardPeriod(periodParam)) {
 		return jsonError(c, 422, "INVALID_PERIOD", "Period must be today, this_week, or all_time");
 	}
+	if (!slug) return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 	const period = periodParam as LeaderboardPeriod;
 
 	const parsed = querySchema.safeParse(c.req.query());
@@ -35,8 +39,12 @@ leaderboardRoutes.get("/games/:slug/leaderboards/:period", async (c) => {
 		return jsonError(c, 422, "INVALID_QUERY", "Leaderboard query is invalid", parsed.error.issues);
 	}
 
-	const game = await getGameBySlug(c.env.DB, c.req.param("slug"));
+	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
+	const mobileAccessToken = c.get("mobileAccessToken");
+	if (mobileAccessToken && parsed.data.player_id && mobileAccessToken.player_id !== parsed.data.player_id) {
+		return jsonError(c, 403, "MOBILE_ACCESS_SCOPE_MISMATCH", "Mobile access is not scoped to this player");
+	}
 
 	const ruleset = await getRuleset(c.env.DB, game.id, parsed.data.ruleset_version);
 	if (!ruleset || ruleset.eligible_for_leaderboard !== 1) {
@@ -105,4 +113,7 @@ leaderboardRoutes.get("/games/:slug/leaderboards/:period", async (c) => {
 		refreshed_at: serverNow,
 		server_now: serverNow,
 	});
-});
+}
+
+leaderboardRoutes.get("/games/:slug/leaderboards/:period", requirePlatformOrMobileAuth, getLeaderboard);
+leaderboardRoutes.get("/mobile/games/:slug/leaderboards/:period", requirePlatformOrMobileAuth, getLeaderboard);

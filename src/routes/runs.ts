@@ -77,7 +77,14 @@ export async function submitRun(c: Context<AppEnv>) {
 		await readJson(c),
 	);
 	if (!parsed.success) {
-		return jsonError(c, 422, "INVALID_RUN", "Run submission is invalid", parsed.error.issues);
+		const schemaFailure = parsed.error.issues
+			.map((issue) => `${issue.path.length > 0 ? issue.path.join(".") : "body"}: ${issue.message}`)
+			.join("; ");
+		console.warn("Run submission rejected by request schema", { issues: parsed.error.issues });
+		return jsonError(c, 422, "INVALID_RUN", schemaFailure || "Run submission is invalid", {
+			phase: "request_schema",
+			issues: parsed.error.issues,
+		});
 	}
 
 	const slug = c.req.param("slug");
@@ -105,18 +112,36 @@ export async function submitRun(c: Context<AppEnv>) {
 	}
 
 	const validationError = validateRunSubmission({ ...incoming, game_id: game.id }, ruleset.validator_key);
-	if (validationError) return jsonError(c, 422, "INVALID_RUN", validationError);
+	if (validationError) {
+		console.warn("Run submission rejected by validator", {
+			game_id: game.id,
+			player_id: incoming.player_id,
+			run_id: incoming.run_id,
+			ruleset_version: incoming.ruleset_version,
+			validator_key: ruleset.validator_key,
+			reason: validationError,
+		});
+		return jsonError(c, 422, "INVALID_RUN", validationError, {
+			phase: "run_validator",
+			validator_key: ruleset.validator_key,
+		});
+	}
 
-	if (
-		session.run_id !== incoming.run_id ||
-		session.game_id !== game.id ||
-		session.player_id !== incoming.player_id ||
-		session.ruleset_version !== incoming.ruleset_version ||
-		session.game_build_version !== incoming.game_build_version ||
-		session.run_seed !== incoming.run_seed ||
-		session.nonce !== incoming.session_nonce
-	) {
-		return jsonError(c, 409, "RUN_SESSION_MISMATCH", "Run does not match its issued session");
+	const sessionMismatches = [
+		["run_id", session.run_id !== incoming.run_id],
+		["game_id", session.game_id !== game.id],
+		["player_id", session.player_id !== incoming.player_id],
+		["ruleset_version", session.ruleset_version !== incoming.ruleset_version],
+		["game_build_version", session.game_build_version !== incoming.game_build_version],
+		["run_seed", session.run_seed !== incoming.run_seed],
+		["session_nonce", session.nonce !== incoming.session_nonce],
+	]
+		.filter(([, mismatch]) => mismatch)
+		.map(([field]) => field);
+	if (sessionMismatches.length > 0) {
+		return jsonError(c, 409, "RUN_SESSION_MISMATCH", "Run does not match its issued session", {
+			mismatched_fields: sessionMismatches,
+		});
 	}
 
 	const serverNow = Math.floor(Date.now() / 1000);

@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
 import { sha256Hex } from "./crypto";
 import { jsonError } from "./http";
-import { getMobileAccessTokenByHash } from "./db";
+import { getGameBySlug, getMobileAccessTokenByHash } from "./db";
 import type { AppEnv } from "./types";
 
 export function bearerToken(header: string | undefined): string | null {
@@ -24,6 +24,31 @@ export async function requireMobileAccessToken(c: Context<AppEnv>, next: Next) {
 
 	c.set("mobileAccessToken", token);
 	return next();
+}
+
+export async function requirePlatformOrMobileAuth(c: Context<AppEnv>, next: Next) {
+	const suppliedToken = bearerToken(c.req.header("Authorization"));
+	const configuredPlatformToken = c.env.PLATFORM_API_TOKEN;
+
+	if (suppliedToken && configuredPlatformToken && (await tokenMatches(suppliedToken, configuredPlatformToken))) {
+		return next();
+	}
+
+	if (suppliedToken) {
+		const mobileToken = await getMobileAccessTokenByHash(c.env.DB, await sha256Hex(suppliedToken));
+		const serverNow = Math.floor(Date.now() / 1000);
+		if (mobileToken && mobileToken.revoked_at === null && mobileToken.expires_at > serverNow) {
+			const slug = c.req.param("slug");
+			const game = slug ? await getGameBySlug(c.env.DB, slug) : null;
+			if (game && mobileToken.game_id !== game.id) {
+				return jsonError(c, 403, "MOBILE_ACCESS_SCOPE_MISMATCH", "Mobile access is not scoped to this game");
+			}
+			c.set("mobileAccessToken", mobileToken);
+			return next();
+		}
+	}
+
+	return requirePlatformAuth(c, next);
 }
 
 export async function tokenMatches(supplied: string, expected: string): Promise<boolean> {

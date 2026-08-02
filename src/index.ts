@@ -26,8 +26,11 @@ app.get("/health", async (c) => {
 
 app.use("/v1/*", async (c, next) => {
 	const pathname = new URL(c.req.url).pathname;
-	const isMobileBrokerRoute = /^\/v1\/mobile\/games\/[^/]+\/(?:access-tokens|run-sessions|runs)$/.test(pathname);
-	return isMobileBrokerRoute ? next() : requirePlatformAuth(c, next);
+	const isMobileBrokerRoute = /^\/v1\/mobile\/games\/[^/]+\/(?:access-tokens|run-sessions|runs|leaderboards\/[^/]+)$/.test(
+		pathname,
+	);
+	const isLeaderboardRoute = /^\/v1\/games\/[^/]+\/leaderboards\/[^/]+$/.test(pathname);
+	return isMobileBrokerRoute || isLeaderboardRoute ? next() : requirePlatformAuth(c, next);
 });
 
 app.route("/v1", playerRoutes);
