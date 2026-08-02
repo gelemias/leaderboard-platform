@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { consumeRateLimit, listRequiredTables, seedDevelopmentGame } from "../src/db";
+import { PendingReplayValidator } from "../src/domain/replay-validator";
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -14,9 +15,29 @@ async function postJson(path: string, body: unknown) {
 	});
 }
 
-function validApiRun(runId: string, playerId: string, score: number, name: string) {
+async function issueRunSession(playerId: string, gameBuildVersion = "test") {
+	const response = await postJson("/v1/games/api-game/run-sessions", {
+		player_id: playerId,
+		ruleset_version: "api-v1",
+		game_build_version: gameBuildVersion,
+	});
+	expect(response.status).toBe(201);
+	return (await response.json()) as {
+		run_id: string;
+		session_token: string;
+		run_seed: number;
+		nonce: string;
+	};
+}
+
+function validApiRun(
+	session: { run_id: string; session_token: string; session_nonce: string; run_seed: number },
+	playerId: string,
+	score: number,
+	name: string,
+) {
 	return {
-		run_id: runId,
+		run_id: session.run_id,
 		player_id: playerId,
 		name,
 		ruleset_version: "api-v1",
@@ -24,7 +45,7 @@ function validApiRun(runId: string, playerId: string, score: number, name: strin
 		jumps: score,
 		near_misses: 0,
 		highest_combo: 1,
-		run_seed: 42,
+		run_seed: session.run_seed,
 		run_duration: 20,
 		game_build_version: "test",
 		run_mode: "normal",
@@ -37,6 +58,9 @@ function validApiRun(runId: string, playerId: string, score: number, name: strin
 		jump_score_points: score,
 		double_gum_bonus_points: 0,
 		golden_treat_bonus_points: 0,
+		session_token: session.session_token,
+		session_nonce: session.nonce,
+		input_trace: [{ type: "swipe", t_ms: 100, direction: "right" }],
 	};
 }
 
@@ -45,6 +69,7 @@ async function insertRun(
 	gameId: string,
 	playerId: string,
 	rulesetVersion: string,
+	score = 10,
 ) {
 	return env.DB
 		.prepare(
@@ -59,8 +84,8 @@ async function insertRun(
 			gameId,
 			playerId,
 			rulesetVersion,
-			10,
-			10,
+			score,
+			score,
 			0,
 			1,
 			42,
@@ -119,6 +144,7 @@ describe("leaderboard platform foundation", () => {
 			"players",
 			"request_limits",
 			"rulesets",
+			"run_sessions",
 			"runs",
 		]);
 	});
@@ -157,6 +183,36 @@ describe("leaderboard platform foundation", () => {
 			version: "cloud-hopper-1",
 			eligible_for_leaderboard: 1,
 		});
+	});
+
+	it("issues a hashed, expiring run session", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-session",
+			display_name: "Session Player",
+		});
+
+		const session = await issueRunSession("api-player-session");
+		expect(session.run_id).toMatch(/^[0-9a-f-]{36}$/);
+		expect(session.session_token).toHaveLength(43);
+		expect(session.nonce).toMatch(/^[0-9a-f-]{36}$/);
+
+		const stored = await env.DB
+			.prepare("SELECT run_id, token_hash, status FROM run_sessions WHERE run_id = ?")
+			.bind(session.run_id)
+			.first<{ run_id: string; token_hash: string; status: string }>();
+		expect(stored).toMatchObject({ run_id: session.run_id, status: "issued" });
+		expect(stored?.token_hash).not.toBe(session.session_token);
+	});
+
+	it("keeps unimplemented replay verification pending by default", async () => {
+		const result = await new PendingReplayValidator().validate({
+			run: {} as never,
+			inputTrace: [],
+			runSeed: 42,
+			rulesetVersion: "api-v1",
+			gameBuildVersion: "test",
+		});
+		expect(result).toEqual({ status: "pending", reason: "SIMULATOR_NOT_IMPLEMENTED" });
 	});
 
 	it("rejects a duplicate run ID", async () => {
@@ -280,20 +336,22 @@ describe("leaderboard platform foundation", () => {
 			player_id: "api-player-runs",
 			display_name: "Run Player",
 		});
-		const body = validApiRun("api-run-1", "api-player-runs", 10, "Run Player");
+		const session = await issueRunSession("api-player-runs");
+		const body = validApiRun(session, "api-player-runs", 10, "Run Player");
 
 		const first = await postJson("/v1/games/api-game/runs", body);
 		expect(first.status).toBe(201);
 		expect(await first.json()).toMatchObject({
 			ok: true,
 			duplicate: false,
-			run_id: "api-run-1",
-			verification_status: "accepted",
+			run_id: body.run_id,
+			verification_status: "pending",
+			verification_code: "REPLAY_VALIDATION_PENDING",
 		});
 
 		const duplicate = await postJson("/v1/games/api-game/runs", body);
 		expect(duplicate.status).toBe(200);
-		expect(await duplicate.json()).toMatchObject({ ok: true, duplicate: true, run_id: "api-run-1" });
+		expect(await duplicate.json()).toMatchObject({ ok: true, duplicate: true, run_id: body.run_id });
 
 		const changed = { ...body, score: 11, jumps: 11, jump_score_points: 11 };
 		const conflict = await postJson("/v1/games/api-game/runs", changed);
@@ -301,10 +359,42 @@ describe("leaderboard platform foundation", () => {
 		expect(await conflict.json()).toMatchObject({ ok: false, error: { code: "RUN_ID_CONFLICT" } });
 
 		const tutorial = await postJson("/v1/games/api-game/runs", {
-			...validApiRun("api-run-tutorial", "api-player-runs", 10, "Run Player"),
+			...validApiRun(await issueRunSession("api-player-runs"), "api-player-runs", 10, "Run Player"),
 			run_mode: "tutorial",
 		});
 		expect(tutorial.status).toBe(422);
+
+		const board = await SELF.fetch(
+			apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1&player_id=api-player-runs"),
+		);
+		expect(board.status).toBe(200);
+		expect((await board.json()).entries).toEqual([]);
+	});
+
+	it("binds evidence to its session and rejects malformed replay traces", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-evidence",
+			display_name: "Evidence Player",
+		});
+		const session = await issueRunSession("api-player-evidence");
+		const invalidTrace = {
+			...validApiRun(session, "api-player-evidence", 10, "Evidence Player"),
+			input_trace: [
+				{ type: "swipe", t_ms: 200, direction: "right" },
+				{ type: "swipe", t_ms: 100, direction: "left" },
+			],
+		};
+		const invalidResponse = await postJson("/v1/games/api-game/runs", invalidTrace);
+		expect(invalidResponse.status).toBe(422);
+		expect(await invalidResponse.json()).toMatchObject({ ok: false, error: { code: "INVALID_RUN" } });
+
+		const otherSession = await issueRunSession("api-player-evidence");
+		const mismatch = await postJson("/v1/games/api-game/runs", {
+			...validApiRun(session, "api-player-evidence", 10, "Evidence Player"),
+			run_id: otherSession.run_id,
+		});
+		expect(mismatch.status).toBe(409);
+		expect(await mismatch.json()).toMatchObject({ ok: false, error: { code: "RUN_SESSION_MISMATCH" } });
 	});
 
 	it("ranks one best run per player and isolates rulesets", async () => {
@@ -317,13 +407,12 @@ describe("leaderboard platform foundation", () => {
 			display_name: "Player B",
 		});
 
-		for (const [runId, playerId, score, name] of [
+		for (const [runId, playerId, score] of [
 			["api-run-a-low", "api-player-a", 20, "Player A"],
 			["api-run-a-best", "api-player-a", 30, "Player A"],
 			["api-run-b", "api-player-b", 15, "Player B"],
 		] as const) {
-			const response = await postJson("/v1/games/api-game/runs", validApiRun(runId, playerId, score, name));
-			expect(response.status).toBe(201);
+			await insertRun(runId, "game-api", playerId, "api-v1", score);
 		}
 
 		const response = await SELF.fetch(

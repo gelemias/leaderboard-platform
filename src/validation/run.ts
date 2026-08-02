@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { displayNameSchema } from "./player";
+import { replayInputTraceSchema } from "./replay";
 
 const nonNegativeInteger = z.number().int().nonnegative();
 const powerUpCounts = z.record(z.string(), nonNegativeInteger);
@@ -16,7 +17,7 @@ export const runSubmissionSchema = z
 		near_misses: nonNegativeInteger,
 		highest_combo: z.number().int().min(1),
 		run_seed: z.number().int(),
-		run_duration: z.number().nonnegative(),
+		run_duration: z.number().nonnegative().max(30 * 60),
 		game_build_version: z.string().min(1).max(128),
 		run_mode: z.enum(["normal", "tutorial", "practice", "debug", "assisted"]),
 		client_completed_at: z.number().int().nonnegative(),
@@ -28,6 +29,9 @@ export const runSubmissionSchema = z
 		jump_score_points: nonNegativeInteger,
 		double_gum_bonus_points: nonNegativeInteger,
 		golden_treat_bonus_points: nonNegativeInteger,
+		session_token: z.string().min(32).max(128),
+		session_nonce: z.string().uuid(),
+		input_trace: replayInputTraceSchema,
 	})
 	.strict();
 

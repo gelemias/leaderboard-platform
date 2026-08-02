@@ -3,6 +3,7 @@ import { checkDatabase } from "./db";
 import { leaderboardRoutes } from "./routes/leaderboards";
 import { playerRoutes } from "./routes/players";
 import { runRoutes } from "./routes/runs";
+import { runSessionRoutes } from "./routes/run-sessions";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -21,6 +22,7 @@ app.get("/health", async (c) => {
 
 app.route("/v1", playerRoutes);
 app.route("/v1", runRoutes);
+app.route("/v1", runSessionRoutes);
 app.route("/v1", leaderboardRoutes);
 
 export default app satisfies ExportedHandler<Env>;

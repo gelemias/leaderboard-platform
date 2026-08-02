@@ -44,4 +44,21 @@ export type RunRow = {
 	jump_score_points: number;
 	double_gum_bonus_points: number;
 	golden_treat_bonus_points: number;
+	run_session_id: string | null;
+	input_trace: string;
+};
+
+export type RunSessionRow = {
+	run_id: string;
+	game_id: string;
+	player_id: string;
+	ruleset_version: string;
+	game_build_version: string;
+	run_seed: number;
+	token_hash: string;
+	nonce: string;
+	issued_at: number;
+	expires_at: number;
+	consumed_at: number | null;
+	status: "issued" | "submitted" | "expired" | "rejected";
 };

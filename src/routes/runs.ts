@@ -1,5 +1,13 @@
 import { Hono } from "hono";
-import { consumeRateLimit, getGameBySlug, getGamePlayer, getRuleset, getRunById } from "../db";
+import {
+	consumeRateLimit,
+	getGameBySlug,
+	getGamePlayer,
+	getRuleset,
+	getRunById,
+	getRunSessionByTokenHash,
+} from "../db";
+import { sha256Hex } from "../crypto";
 import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import { runSubmissionRequestSchema, type RunSubmissionRequest } from "../validation/run";
@@ -49,6 +57,7 @@ function sameRun(existing: Awaited<ReturnType<typeof getRunById>>, incoming: Run
 		existing.jump_score_points === incoming.jump_score_points &&
 		existing.double_gum_bonus_points === incoming.double_gum_bonus_points &&
 		existing.golden_treat_bonus_points === incoming.golden_treat_bonus_points
+		&& sameJson(existing.input_trace, incoming.input_trace)
 	);
 }
 
@@ -76,6 +85,32 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 	const validationError = validateRunSubmission({ ...incoming, game_id: game.id });
 	if (validationError) return jsonError(c, 422, "INVALID_RUN", validationError);
 
+	const session = await getRunSessionByTokenHash(c.env.DB, await sha256Hex(incoming.session_token));
+	if (!session) return jsonError(c, 422, "INVALID_RUN_SESSION", "Run session token is invalid");
+	if (
+		session.run_id !== incoming.run_id ||
+		session.game_id !== game.id ||
+		session.player_id !== incoming.player_id ||
+		session.ruleset_version !== incoming.ruleset_version ||
+		session.game_build_version !== incoming.game_build_version ||
+		session.run_seed !== incoming.run_seed ||
+		session.nonce !== incoming.session_nonce
+	) {
+		return jsonError(c, 409, "RUN_SESSION_MISMATCH", "Run does not match its issued session");
+	}
+
+	const serverNow = Math.floor(Date.now() / 1000);
+	const lastTraceEvent = incoming.input_trace[incoming.input_trace.length - 1];
+	if (lastTraceEvent && lastTraceEvent.t_ms > incoming.run_duration * 1000) {
+		return jsonError(c, 422, "INVALID_INPUT_TRACE", "Input trace extends beyond the run duration");
+	}
+	if (session.status === "issued" && serverNow > session.expires_at) {
+		await c.env.DB.prepare("UPDATE run_sessions SET status = 'expired' WHERE run_id = ? AND status = 'issued'")
+			.bind(session.run_id)
+			.run();
+		return jsonError(c, 409, "RUN_SESSION_EXPIRED", "Run session has expired");
+	}
+
 	const existing = await getRunById(c.env.DB, incoming.run_id);
 	if (existing) {
 		if (!sameRun(existing, incoming, game.id)) {
@@ -89,6 +124,9 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 			verification_status: existing.verification_status,
 		});
 	}
+	if (session.status !== "issued") {
+		return jsonError(c, 409, "RUN_SESSION_CONSUMED", "Run session has already been consumed");
+	}
 
 	const rate = await consumeRateLimit(c.env.DB, "submission", incoming.player_id, 30, 3600);
 	if (!rate.allowed) {
@@ -97,17 +135,19 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 		});
 	}
 
-	const serverReceivedAt = Math.floor(Date.now() / 1000);
+	const serverReceivedAt = serverNow;
 	try {
-		await c.env.DB.prepare(
+		const results = await c.env.DB.batch([
+		c.env.DB.prepare(
 			`INSERT INTO runs (
 				run_id, game_id, player_id, ruleset_version, score, jumps, near_misses,
 				highest_combo, run_seed, run_duration, game_build_version, run_mode,
 				client_completed_at, server_received_at, verification_status,
 				power_up_types_collected, power_up_collection_counts,
 				power_up_activation_counts, shield_breaks, double_gum_boosted_jumps,
-				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points,
+				run_session_id, input_trace
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		)
 			.bind(
 				incoming.run_id,
@@ -124,7 +164,7 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 				incoming.run_mode,
 				incoming.client_completed_at,
 				serverReceivedAt,
-				"accepted",
+				"pending",
 				stableJson(incoming.power_up_types_collected),
 				stableJson(incoming.power_up_collection_counts),
 				stableJson(incoming.power_up_activation_counts),
@@ -133,8 +173,15 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 				incoming.jump_score_points,
 				incoming.double_gum_bonus_points,
 				incoming.golden_treat_bonus_points,
+				incoming.run_id,
+				stableJson(incoming.input_trace),
+			),
+		c.env.DB.prepare(
+				"UPDATE run_sessions SET status = 'submitted', consumed_at = ? WHERE run_id = ? AND status = 'issued'",
 			)
-			.run();
+			.bind(serverReceivedAt, incoming.run_id),
+		]);
+		if (results[1].meta.changes !== 1) throw new Error("Run session was consumed concurrently");
 	} catch {
 		const raced = await getRunById(c.env.DB, incoming.run_id);
 		if (sameRun(raced, incoming, game.id)) {
@@ -155,7 +202,8 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 			duplicate: false,
 			run_id: incoming.run_id,
 			server_received_at: serverReceivedAt,
-			verification_status: "accepted",
+			verification_status: "pending",
+			verification_code: "REPLAY_VALIDATION_PENDING",
 		},
 		201,
 	);

@@ -1,6 +1,14 @@
-import type { GamePlayerRow, GameRow, RulesetRow, RunRow } from "./types";
+import type { GamePlayerRow, GameRow, RulesetRow, RunRow, RunSessionRow } from "./types";
 
-const REQUIRED_TABLES = ["games", "rulesets", "players", "game_players", "runs", "request_limits"] as const;
+const REQUIRED_TABLES = [
+	"games",
+	"rulesets",
+	"players",
+	"game_players",
+	"runs",
+	"run_sessions",
+	"request_limits",
+] as const;
 
 export type DatabaseHealth = {
 	available: boolean;
@@ -59,11 +67,26 @@ export async function getRunById(db: D1Database, runId: string): Promise<RunRow 
 				client_completed_at, server_received_at, verification_status,
 				power_up_types_collected, power_up_collection_counts,
 				power_up_activation_counts, shield_breaks, double_gum_boosted_jumps,
-				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points
+				jump_score_points, double_gum_bonus_points, golden_treat_bonus_points,
+				run_session_id, input_trace
 			 FROM runs WHERE run_id = ? LIMIT 1`,
 		)
 		.bind(runId)
 		.first<RunRow>();
+}
+
+export async function getRunSessionByTokenHash(
+	db: D1Database,
+	tokenHash: string,
+): Promise<RunSessionRow | null> {
+	return db
+		.prepare(
+			`SELECT run_id, game_id, player_id, ruleset_version, game_build_version,
+				run_seed, token_hash, nonce, issued_at, expires_at, consumed_at, status
+			 FROM run_sessions WHERE token_hash = ? LIMIT 1`,
+		)
+		.bind(tokenHash)
+		.first<RunSessionRow>();
 }
 
 export type RateLimitResult = {
