@@ -444,6 +444,56 @@ describe("leaderboard platform foundation", () => {
 		expect(await submission.json()).toMatchObject({ ok: true, verification_status: "pending" });
 	});
 
+	it("binds an explicitly supplied mobile display name through session validation", async () => {
+		const playerId = "mobile-paquito";
+		const initialToken = await postJson("/v1/mobile/games/api-game/access-tokens", { player_id: playerId });
+		expect(initialToken.status).toBe(201);
+		expect((await initialToken.json()) as { name: string }).toMatchObject({
+			name: expect.stringMatching(/^Mobile [0-9a-f]{8}$/),
+		});
+
+		const namedTokenResponse = await postJson("/v1/mobile/games/api-game/access-tokens", {
+			player_id: playerId,
+			display_name: "Paquito",
+		});
+		expect(namedTokenResponse.status).toBe(201);
+		const namedToken = (await namedTokenResponse.json()) as {
+			access_token: string;
+			name: string;
+		};
+		expect(namedToken.name).toBe("Paquito");
+
+		const sessionResponse = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${namedToken.access_token}`,
+			},
+			body: JSON.stringify({
+				ruleset_version: "api-v1",
+				game_build_version: "mobile-paquito",
+			}),
+		});
+		expect(sessionResponse.status).toBe(201);
+		const session = (await sessionResponse.json()) as {
+			run_id: string;
+			session_token: string;
+			nonce: string;
+			run_seed: number;
+		};
+
+		const submission = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/runs"), {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				...validApiRun(session, playerId, 11, "Paquito"),
+				game_build_version: "mobile-paquito",
+			}),
+		});
+		expect(submission.status).toBe(201);
+		expect(await submission.json()).toMatchObject({ ok: true, verification_status: "pending" });
+	});
+
 	it("requires the simulator result to match every submitted statistic", () => {
 		const stats: ReplayStats = {
 			score: 12,

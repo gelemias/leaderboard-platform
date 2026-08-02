@@ -41,8 +41,24 @@ mobileRoutes.post("/mobile/games/:slug/access-tokens", async (c) => {
 	const playerId = parsed.data.player_id ?? `mobile-${crypto.randomUUID()}`;
 	const existingPlayer = await getGamePlayer(c.env.DB, game.id, playerId);
 	let player = existingPlayer;
+	const requestedDisplayName = parsed.data.display_name;
+	if (player && requestedDisplayName !== undefined && player.display_name !== requestedDisplayName) {
+		// The broker request is the source of truth for the mobile identity. Keep
+		// the game-scoped player binding aligned so later run validation accepts
+		// the same name returned by this exchange.
+		try {
+			await c.env.DB.prepare(
+				"UPDATE game_players SET display_name = ?, updated_at = ? WHERE game_id = ? AND player_id = ?",
+			)
+				.bind(requestedDisplayName, Math.floor(Date.now() / 1000), game.id, playerId)
+				.run();
+			player = await getGamePlayer(c.env.DB, game.id, playerId);
+		} catch {
+			return jsonError(c, 409, "PLAYER_PROVISION_CONFLICT", "Could not provision a player for this game");
+		}
+	}
 	if (!player) {
-		const displayName = parsed.data.display_name ?? `Mobile ${crypto.randomUUID().slice(0, 8)}`;
+		const displayName = requestedDisplayName ?? `Mobile ${crypto.randomUUID().slice(0, 8)}`;
 		try {
 			const timestamp = Math.floor(Date.now() / 1000);
 			await c.env.DB.batch([
