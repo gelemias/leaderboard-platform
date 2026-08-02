@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import {
 	consumeRateLimit,
 	getGameBySlug,
@@ -66,13 +67,15 @@ function sameRun(existing: Awaited<ReturnType<typeof getRunById>>, incoming: Run
 	);
 }
 
-runRoutes.post("/games/:slug/runs", async (c) => {
+export async function submitRun(c: Context<AppEnv>) {
 	const parsed = runSubmissionRequestSchema.safeParse(await readJson(c));
 	if (!parsed.success) {
 		return jsonError(c, 422, "INVALID_RUN", "Run submission is invalid", parsed.error.issues);
 	}
 
-	const game = await getGameBySlug(c.env.DB, c.req.param("slug"));
+	const slug = c.req.param("slug");
+	if (!slug) return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
+	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
 	const incoming = normalizeRunSubmission(parsed.data);
@@ -241,4 +244,6 @@ runRoutes.post("/games/:slug/runs", async (c) => {
 		},
 		201,
 	);
-});
+}
+
+runRoutes.post("/games/:slug/runs", submitRun);

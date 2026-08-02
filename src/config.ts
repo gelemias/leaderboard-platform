@@ -4,6 +4,7 @@ export type RateLimits = {
 	sessionsPerHour: number;
 	submissionsPerHour: number;
 	leaderboardPerMinute: number;
+	mobileAccessTokenTtlSeconds: number;
 };
 
 function boundedInteger(value: string | undefined, fallback: number, maximum: number): number {
@@ -17,5 +18,6 @@ export function getRateLimits(env: AppBindings): RateLimits {
 		sessionsPerHour: boundedInteger(env.SESSION_RATE_LIMIT_PER_HOUR, 20, 1000),
 		submissionsPerHour: boundedInteger(env.SUBMISSION_RATE_LIMIT_PER_HOUR, 30, 1000),
 		leaderboardPerMinute: boundedInteger(env.LEADERBOARD_RATE_LIMIT_PER_MINUTE, 60, 1000),
+		mobileAccessTokenTtlSeconds: boundedInteger(env.MOBILE_ACCESS_TOKEN_TTL_SECONDS, 15 * 60, 60 * 60),
 	};
 }

@@ -53,6 +53,17 @@ CREATE TABLE IF NOT EXISTS run_sessions (
   FOREIGN KEY (game_id, ruleset_version) REFERENCES rulesets(game_id, version) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS mobile_access_tokens (
+  token_id TEXT PRIMARY KEY,
+  game_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  issued_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  FOREIGN KEY (game_id, player_id) REFERENCES game_players(game_id, player_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS runs (
   run_id TEXT PRIMARY KEY,
   game_id TEXT NOT NULL,
@@ -109,6 +120,12 @@ CREATE INDEX IF NOT EXISTS idx_run_sessions_player_issued
 
 CREATE INDEX IF NOT EXISTS idx_run_sessions_expiry
   ON run_sessions (status, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_mobile_access_tokens_expiry
+  ON mobile_access_tokens (expires_at, revoked_at);
+
+CREATE INDEX IF NOT EXISTS idx_mobile_access_tokens_subject
+  ON mobile_access_tokens (game_id, player_id, expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_runs_session
   ON runs (run_session_id);

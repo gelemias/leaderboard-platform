@@ -46,6 +46,16 @@ async function issueRunSessionFor(
 	};
 }
 
+async function issueMobileAccessToken(playerId: string) {
+	const response = await postJson("/v1/mobile/games/api-game/access-tokens", { player_id: playerId });
+	expect(response.status).toBe(201);
+	return (await response.json()) as {
+		access_token: string;
+		expires_at: number;
+		player_id: string;
+	};
+}
+
 async function issueRunSession(playerId: string, gameBuildVersion = "test") {
 	return issueRunSessionFor("api-game", playerId, "api-v1", gameBuildVersion);
 }
@@ -169,6 +179,7 @@ describe("leaderboard platform foundation", () => {
 		expect(await listRequiredTables(env.DB)).toEqual([
 			"game_players",
 			"games",
+			"mobile_access_tokens",
 			"players",
 			"request_limits",
 			"rulesets",
@@ -287,6 +298,7 @@ describe("leaderboard platform foundation", () => {
 			sessionsPerHour: 20,
 			submissionsPerHour: 30,
 			leaderboardPerMinute: 60,
+			mobileAccessTokenTtlSeconds: 900,
 		});
 		expect(
 			getRateLimits({
@@ -294,7 +306,94 @@ describe("leaderboard platform foundation", () => {
 				SUBMISSION_RATE_LIMIT_PER_HOUR: "45",
 				LEADERBOARD_RATE_LIMIT_PER_MINUTE: "invalid",
 			} as never),
-		).toEqual({ sessionsPerHour: 1000, submissionsPerHour: 45, leaderboardPerMinute: 60 });
+		).toEqual({
+			sessionsPerHour: 1000,
+			submissionsPerHour: 45,
+			leaderboardPerMinute: 60,
+			mobileAccessTokenTtlSeconds: 900,
+		});
+	});
+
+	it("exchanges platform auth for scoped mobile sessions and accepts bearerless submissions", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "mobile-player",
+			display_name: "Mobile Player",
+		});
+		await postJson("/v1/games/api-game/players", {
+			player_id: "other-mobile-player",
+			display_name: "Other Mobile Player",
+		});
+
+		const mobileToken = await issueMobileAccessToken("mobile-player");
+		expect(mobileToken.access_token).toHaveLength(43);
+		expect(mobileToken.player_id).toBe("mobile-player");
+		expect(mobileToken.expires_at).toBeGreaterThan(now());
+
+		const sessionResponse = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${mobileToken.access_token}`,
+			},
+			body: JSON.stringify({
+				player_id: "mobile-player",
+				ruleset_version: "api-v1",
+				game_build_version: "mobile-test",
+			}),
+		});
+		expect(sessionResponse.status).toBe(201);
+		const session = (await sessionResponse.json()) as {
+			run_id: string;
+			session_token: string;
+			nonce: string;
+			run_seed: number;
+		};
+
+		const submission = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/runs"), {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				...validApiRun(session, "mobile-player", 10, "Mobile Player"),
+				game_build_version: "mobile-test",
+			}),
+		});
+		expect(submission.status).toBe(201);
+		expect(await submission.json()).toMatchObject({
+			ok: true,
+			verification_status: "pending",
+		});
+
+		const replayedToken = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${mobileToken.access_token}`,
+			},
+			body: JSON.stringify({
+				player_id: "mobile-player",
+				ruleset_version: "api-v1",
+				game_build_version: "mobile-test",
+			}),
+		});
+		expect(replayedToken.status).toBe(201);
+
+		const wrongScope = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${mobileToken.access_token}`,
+			},
+			body: JSON.stringify({
+				player_id: "other-mobile-player",
+				ruleset_version: "api-v1",
+				game_build_version: "mobile-test",
+			}),
+		});
+		expect(wrongScope.status).toBe(403);
+		expect(await wrongScope.json()).toMatchObject({
+			ok: false,
+			error: { code: "MOBILE_ACCESS_SCOPE_MISMATCH" },
+		});
 	});
 
 	it("requires the simulator result to match every submitted statistic", () => {

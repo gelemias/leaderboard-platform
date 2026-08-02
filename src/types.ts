@@ -5,9 +5,15 @@ export type AppBindings = Env & {
 	SESSION_RATE_LIMIT_PER_HOUR?: string;
 	SUBMISSION_RATE_LIMIT_PER_HOUR?: string;
 	LEADERBOARD_RATE_LIMIT_PER_MINUTE?: string;
+	MOBILE_ACCESS_TOKEN_TTL_SECONDS?: string;
 };
 
-export type AppEnv = { Bindings: AppBindings };
+export type AppEnv = {
+	Bindings: AppBindings;
+	Variables: {
+		mobileAccessToken?: MobileAccessTokenRow;
+	};
+};
 
 export type GameRow = {
 	id: string;
@@ -72,4 +78,14 @@ export type RunSessionRow = {
 	expires_at: number;
 	consumed_at: number | null;
 	status: "issued" | "submitted" | "expired" | "rejected";
+};
+
+export type MobileAccessTokenRow = {
+	token_id: string;
+	game_id: string;
+	player_id: string;
+	token_hash: string;
+	issued_at: number;
+	expires_at: number;
+	revoked_at: number | null;
 };

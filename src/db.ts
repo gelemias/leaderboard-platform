@@ -1,4 +1,11 @@
-import type { GamePlayerRow, GameRow, RulesetRow, RunRow, RunSessionRow } from "./types";
+import type {
+	GamePlayerRow,
+	GameRow,
+	MobileAccessTokenRow,
+	RulesetRow,
+	RunRow,
+	RunSessionRow,
+} from "./types";
 
 const REQUIRED_TABLES = [
 	"games",
@@ -7,6 +14,7 @@ const REQUIRED_TABLES = [
 	"game_players",
 	"runs",
 	"run_sessions",
+	"mobile_access_tokens",
 	"request_limits",
 ] as const;
 
@@ -87,6 +95,19 @@ export async function getRunSessionByTokenHash(
 		)
 		.bind(tokenHash)
 		.first<RunSessionRow>();
+}
+
+export async function getMobileAccessTokenByHash(
+	db: D1Database,
+	tokenHash: string,
+): Promise<MobileAccessTokenRow | null> {
+	return db
+		.prepare(
+			`SELECT token_id, game_id, player_id, token_hash, issued_at, expires_at, revoked_at
+			 FROM mobile_access_tokens WHERE token_hash = ? LIMIT 1`,
+		)
+		.bind(tokenHash)
+		.first<MobileAccessTokenRow>();
 }
 
 export type RateLimitResult = {

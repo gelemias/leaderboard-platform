@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { consumeRateLimit, getGameBySlug, getGamePlayer, getRuleset } from "../db";
 import { getRateLimits } from "../config";
 import { createOpaqueToken, createRunSeed, sha256Hex } from "../crypto";
@@ -18,17 +19,27 @@ const runSessionRequestSchema = z
 
 export const runSessionRoutes = new Hono<AppEnv>();
 
-runSessionRoutes.post("/games/:slug/run-sessions", async (c) => {
+export async function issueRunSession(c: Context<AppEnv>) {
 	const parsed = runSessionRequestSchema.safeParse(await readJson(c));
 	if (!parsed.success) {
 		return jsonError(c, 422, "INVALID_RUN_SESSION", "Run session request is invalid", parsed.error.issues);
 	}
 
-	const game = await getGameBySlug(c.env.DB, c.req.param("slug"));
+	const slug = c.req.param("slug");
+	if (!slug) return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
+	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
 	const { player_id: playerId, ruleset_version: rulesetVersion, game_build_version: gameBuildVersion } =
 		parsed.data;
+	const mobileAccessToken = c.get("mobileAccessToken");
+	if (
+		mobileAccessToken &&
+		(mobileAccessToken.game_id !== game.id || mobileAccessToken.player_id !== playerId)
+	) {
+		return jsonError(c, 403, "MOBILE_ACCESS_SCOPE_MISMATCH", "Mobile access is not scoped to this game and player");
+	}
+
 	const ruleset = await getRuleset(c.env.DB, game.id, rulesetVersion);
 	if (!ruleset || ruleset.eligible_for_leaderboard !== 1) {
 		return jsonError(c, 422, "INELIGIBLE_RULESET", "Ruleset is not eligible for this leaderboard");
@@ -90,4 +101,6 @@ runSessionRoutes.post("/games/:slug/run-sessions", async (c) => {
 		},
 		201,
 	);
-});
+}
+
+runSessionRoutes.post("/games/:slug/run-sessions", issueRunSession);

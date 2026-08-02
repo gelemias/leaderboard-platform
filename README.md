@@ -34,6 +34,9 @@ The first API routes are:
 - `POST /v1/games/:slug/players` with `{ "player_id": "...", "name": "..." }` to register or restore a player. `display_name` is accepted as the platform-native alias.
 - `PATCH /v1/games/:slug/players/:playerId` with `{ "name": "..." }` to update a player name. `display_name` is accepted as the platform-native alias.
 - `POST /v1/games/:slug/run-sessions` with `player_id`, `ruleset_version`, and `game_build_version` to receive a one-time server-issued run session. Game adapters may also send `run_mode` and `simulation_timestep_ms` as simulator contract metadata.
+- `POST /v1/mobile/games/:slug/access-tokens` with `{ "player_id": "..." }` to exchange a platform bearer token for a short-lived, game/player-scoped mobile access token. This exchange is for a trusted game/backend service; never ship `PLATFORM_API_TOKEN` in the mobile app.
+- `POST /v1/mobile/games/:slug/run-sessions` with the mobile access token as `Authorization: Bearer ...` to receive a run session without the platform bearer token.
+- `POST /v1/mobile/games/:slug/runs` with the run payload plus the issued `session_token` and `session_nonce`. This route is intentionally bearerless; the one-time session is the submission credential.
 - `POST /v1/games/:slug/runs` with the validated run payload plus the session's `session_token`, `session_nonce`, `run_id`, `run_seed`, and `input_trace`.
 - `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Optional `player_id`, `top_limit`, and `nearby_limit` query parameters return the current player window.
 
@@ -47,7 +50,7 @@ The Worker also translates Jumpy Chewie's native replay evidence at the boundary
 
 ## Production security configuration
 
-The `/health` endpoint is public. All `/v1/*` routes accept a platform bearer token when `PLATFORM_API_TOKEN` is configured. Set `AUTH_REQUIRED=true` or `ENVIRONMENT=production` in production; if authentication is required but the token is missing, the Worker returns a configuration error instead of serving the API openly.
+The `/health` endpoint is public. Platform routes under `/v1/*` accept a platform bearer token when `PLATFORM_API_TOKEN` is configured. The mobile session and submission routes are the explicit exceptions: session issuance requires a short-lived mobile access token obtained through the platform-authenticated exchange, and submissions require the issued `session_token` plus `session_nonce`. Set `AUTH_REQUIRED=true` or `ENVIRONMENT=production` in production; if authentication is required but the token is missing, the Worker returns a configuration error instead of serving the platform API openly.
 
 Configure secrets without committing them:
 
@@ -61,6 +64,7 @@ Configure these non-secret production variables in the Worker environment:
 - `SESSION_RATE_LIMIT_PER_HOUR` (default `20`)
 - `SUBMISSION_RATE_LIMIT_PER_HOUR` (default `30`)
 - `LEADERBOARD_RATE_LIMIT_PER_MINUTE` (default `60`)
+- `MOBILE_ACCESS_TOKEN_TTL_SECONDS` (default `900`, capped at `3600`)
 
 The limits are persisted in D1 and capped by the Worker at safe configuration maxima. The local environment intentionally remains open when no token is configured so local tests and development do not require a secret.
 
@@ -88,6 +92,7 @@ Wrangler persists local D1 data by default. The default binding uses the develop
 - `game_players`: per-game display name and membership, keyed by `(game_id, player_id)`.
 - `runs`: idempotent `run_id`, game/player/ruleset association, score, canonical `game_stats` JSON, compatibility statistics, client/server timestamps, verification status, and replay evidence.
 - `run_sessions`: short-lived server-issued run identity, seed, nonce, hashed token, expiry, and one-time consumption state.
+- `mobile_access_tokens`: short-lived game/player-scoped access tokens used to exchange trusted backend authorization for mobile run-session access. Only the SHA-256 hash is stored.
 - `request_limits`: per-scope subject counters used for submission and leaderboard refresh windows.
 
 Runs have composite foreign keys to both `game_players` and `(game_id, ruleset_version)`. This prevents a run from mixing a player or ruleset from another game. Indexes cover ruleset eligibility/validator selection, player lookup, server receipt order, and accepted-run score ordering.
