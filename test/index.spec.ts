@@ -52,6 +52,7 @@ async function issueMobileAccessToken(playerId: string) {
 	return (await response.json()) as {
 		access_token: string;
 		expires_at: number;
+		expires_in: number;
 		player_id: string;
 	};
 }
@@ -328,6 +329,7 @@ describe("leaderboard platform foundation", () => {
 		expect(mobileToken.access_token).toHaveLength(43);
 		expect(mobileToken.player_id).toBe("mobile-player");
 		expect(mobileToken.expires_at).toBeGreaterThan(now());
+		expect(mobileToken.expires_in).toBe(900);
 
 		const sessionResponse = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
 			method: "POST",

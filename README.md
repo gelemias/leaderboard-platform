@@ -34,7 +34,7 @@ The first API routes are:
 - `POST /v1/games/:slug/players` with `{ "player_id": "...", "name": "..." }` to register or restore a player. `display_name` is accepted as the platform-native alias.
 - `PATCH /v1/games/:slug/players/:playerId` with `{ "name": "..." }` to update a player name. `display_name` is accepted as the platform-native alias.
 - `POST /v1/games/:slug/run-sessions` with `player_id`, `ruleset_version`, and `game_build_version` to receive a one-time server-issued run session. Game adapters may also send `run_mode` and `simulation_timestep_ms` as simulator contract metadata.
-- `POST /v1/mobile/games/:slug/access-tokens` with `{ "player_id": "..." }` to exchange a platform bearer token for a short-lived, game/player-scoped mobile access token. This exchange is for a trusted game/backend service; never ship `PLATFORM_API_TOKEN` in the mobile app.
+- `POST /v1/mobile/games/:slug/access-tokens` with `{ "player_id": "..." }` as the app-facing broker endpoint. It accepts no `Authorization` header; the Worker uses its server-side `PLATFORM_API_TOKEN` configuration and returns a short-lived, game/player-scoped mobile access token plus `expires_at` and `expires_in`. Never ship `PLATFORM_API_TOKEN` in the mobile app.
 - `POST /v1/mobile/games/:slug/run-sessions` with the mobile access token as `Authorization: Bearer ...` to receive a run session without the platform bearer token.
 - `POST /v1/mobile/games/:slug/runs` with the run payload plus the issued `session_token` and `session_nonce`. This route is intentionally bearerless; the one-time session is the submission credential.
 - `POST /v1/games/:slug/runs` with the validated run payload plus the session's `session_token`, `session_nonce`, `run_id`, `run_seed`, and `input_trace`.
@@ -50,7 +50,7 @@ The Worker also translates Jumpy Chewie's native replay evidence at the boundary
 
 ## Production security configuration
 
-The `/health` endpoint is public. Platform routes under `/v1/*` accept a platform bearer token when `PLATFORM_API_TOKEN` is configured. The mobile session and submission routes are the explicit exceptions: session issuance requires a short-lived mobile access token obtained through the platform-authenticated exchange, and submissions require the issued `session_token` plus `session_nonce`. Set `AUTH_REQUIRED=true` or `ENVIRONMENT=production` in production; if authentication is required but the token is missing, the Worker returns a configuration error instead of serving the platform API openly.
+The `/health` endpoint is public. Platform routes under `/v1/*` accept a platform bearer token when `PLATFORM_API_TOKEN` is configured. The mobile broker, session, and submission routes are the explicit exceptions: the broker accepts no app-supplied Authorization header and requires the Worker-side `PLATFORM_API_TOKEN` to be configured in production, session issuance requires the broker-issued mobile access token, and submissions require the issued `session_token` plus `session_nonce`. Set `AUTH_REQUIRED=true` or `ENVIRONMENT=production` in production; if authentication is required but the platform secret is missing, the Worker returns a configuration error instead of serving the platform API openly.
 
 Configure secrets without committing them:
 

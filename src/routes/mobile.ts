@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { requireMobileAccessToken, requirePlatformAuth } from "../auth";
+import { requireMobileAccessToken } from "../auth";
 import { consumeRateLimit, getGameBySlug, getGamePlayer } from "../db";
 import { getRateLimits } from "../config";
 import { createOpaqueToken, sha256Hex } from "../crypto";
@@ -15,10 +15,14 @@ const mobileAccessTokenRequestSchema = z
 
 export const mobileRoutes = new Hono<AppEnv>();
 
-// This route is intended for a trusted game/backend service. The platform bearer
-// must never be embedded in a mobile app; the app receives only this short-lived,
-// game/player-scoped access token.
-mobileRoutes.post("/mobile/games/:slug/access-tokens", requirePlatformAuth, async (c) => {
+// App-facing broker route. The app sends no Authorization header. The Worker
+// owns PLATFORM_API_TOKEN server-side and returns only a short-lived scoped token.
+mobileRoutes.post("/mobile/games/:slug/access-tokens", async (c) => {
+	const authRequired = c.env.AUTH_REQUIRED === "true" || c.env.ENVIRONMENT === "production";
+	if (authRequired && !c.env.PLATFORM_API_TOKEN) {
+		return jsonError(c, 503, "MOBILE_BROKER_NOT_CONFIGURED", "The mobile token broker is not configured");
+	}
+
 	const parsed = mobileAccessTokenRequestSchema.safeParse(await readJson(c));
 	if (!parsed.success) {
 		return jsonError(c, 422, "INVALID_MOBILE_TOKEN_REQUEST", "Mobile token request is invalid", parsed.error.issues);
@@ -76,6 +80,7 @@ mobileRoutes.post("/mobile/games/:slug/access-tokens", requirePlatformAuth, asyn
 			player_id: player.player_id,
 			issued_at: issuedAt,
 			expires_at: expiresAt,
+			expires_in: expiresAt - issuedAt,
 		},
 		201,
 	);
