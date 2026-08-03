@@ -21,6 +21,7 @@ import { replayStatsMatch } from "../domain/replay-validator";
 import { replayValidatorRegistry } from "../domain/replay-registry";
 import { getRateLimits } from "../config";
 import { normalizeRunSubmission, replayTimelineDurationMs } from "../domain/simulators/jumpy-chewie-translation";
+import { claimPlayerName } from "./players";
 
 export const runRoutes = new Hono<AppEnv>();
 
@@ -211,6 +212,9 @@ export async function submitRun(c: Context<AppEnv>) {
 			: verificationStatus === "rejected"
 				? "REPLAY_VALIDATION_REJECTED"
 				: "REPLAY_VALIDATION_PENDING";
+	if (verificationStatus === "accepted" && !(await claimPlayerName(c.env.DB, game.id, incoming.player_id, incoming.name))) {
+		return jsonError(c, 409, "PLAYER_NAME_CONFLICT", "That name is already used by a player with an accepted score");
+	}
 
 	const serverReceivedAt = serverNow;
 	try {

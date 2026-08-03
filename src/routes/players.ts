@@ -7,6 +7,43 @@ import { playerNameUpdateSchema, playerRegistrationSchema } from "../validation/
 
 export const playerRoutes = new Hono<AppEnv>();
 
+const TEMPORARY_NAME_PREFIX = "Mobile ";
+
+/**
+ * A name is reserved by an accepted score, not by an abandoned provisioning
+ * row. Older provisioning rows can otherwise strand a name forever even
+ * though they never appear on a leaderboard.
+ */
+export async function claimPlayerName(db: D1Database, gameId: string, playerId: string, displayName: string): Promise<boolean> {
+	const conflict = await db
+		.prepare(
+			`SELECT gp.player_id,
+					EXISTS (
+						SELECT 1 FROM runs r
+						WHERE r.game_id = gp.game_id
+							AND r.player_id = gp.player_id
+							AND r.verification_status = 'accepted'
+					) AS has_accepted_run
+			 FROM game_players gp
+			 WHERE gp.game_id = ?
+				 AND gp.player_id <> ?
+				 AND gp.display_name = ? COLLATE NOCASE
+			 LIMIT 1`,
+		)
+		.bind(gameId, playerId, displayName)
+		.first<{ player_id: string; has_accepted_run: number }>();
+
+	if (!conflict) return true;
+	if (Number(conflict.has_accepted_run) === 1) return false;
+
+	const temporaryName = `${TEMPORARY_NAME_PREFIX}${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
+	await db
+		.prepare("UPDATE game_players SET display_name = ?, updated_at = ? WHERE game_id = ? AND player_id = ?")
+		.bind(temporaryName, Math.floor(Date.now() / 1000), gameId, conflict.player_id)
+		.run();
+	return true;
+}
+
 export async function updatePlayerName(c: Context<AppEnv>) {
 	const parsed = playerNameUpdateSchema.safeParse(await readJson(c));
 	if (!parsed.success) {
@@ -23,6 +60,9 @@ export async function updatePlayerName(c: Context<AppEnv>) {
 	}
 	const player = await getGamePlayer(c.env.DB, game.id, playerId);
 	if (!player) return jsonError(c, 404, "UNKNOWN_PLAYER", "Player is not registered for this game");
+	if (!(await claimPlayerName(c.env.DB, game.id, playerId, parsed.data.display_name))) {
+		return jsonError(c, 409, "PLAYER_NAME_CONFLICT", "That name is already used by a player with an accepted score");
+	}
 
 	try {
 		await c.env.DB
@@ -49,6 +89,9 @@ playerRoutes.post("/games/:slug/players", async (c) => {
 	const existing = await getGamePlayer(c.env.DB, game.id, playerId);
 	if (existing) {
 		return c.json({ ok: true, player_id: playerId, name: existing.display_name, created: false });
+	}
+	if (!(await claimPlayerName(c.env.DB, game.id, playerId, displayName))) {
+		return jsonError(c, 409, "PLAYER_NAME_CONFLICT", "That name is already used by a player with an accepted score");
 	}
 
 	try {

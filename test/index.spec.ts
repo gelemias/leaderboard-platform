@@ -781,7 +781,7 @@ describe("leaderboard platform foundation", () => {
 		});
 	});
 
-	it("updates a player name and rejects a name already used in the game", async () => {
+	it("releases unaccepted names but reserves names with accepted scores", async () => {
 		await postJson("/v1/games/api-game/players", {
 			player_id: "api-player-rename",
 			display_name: "Old Player",
@@ -803,13 +803,34 @@ describe("leaderboard platform foundation", () => {
 			name: "New Player",
 		});
 
-		const conflict = await SELF.fetch(apiUrl("/v1/games/api-game/players/api-player-rename"), {
+		const reused = await SELF.fetch(apiUrl("/v1/games/api-game/players/api-player-rename"), {
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ display_name: "Taken Player" }),
 		});
+		expect(reused.status).toBe(200);
+		expect(await reused.json()).toMatchObject({ ok: true, name: "Taken Player" });
+		const released = await env.DB
+			.prepare("SELECT display_name FROM game_players WHERE game_id = ? AND player_id = ?")
+			.bind("game-api", "api-player-rename-other")
+			.first<{ display_name: string }>();
+		expect(released?.display_name).toMatch(/^Mobile [0-9a-f]{8}$/);
+
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-accepted-name",
+			display_name: "Accepted Player",
+		});
+		await insertRun("accepted-name-reservation", "game-api", "api-player-accepted-name", "api-v1");
+		const conflict = await SELF.fetch(apiUrl("/v1/games/api-game/players/api-player-rename"), {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ display_name: "Accepted Player" }),
+		});
 		expect(conflict.status).toBe(409);
-		expect(await conflict.json()).toMatchObject({ ok: false, error: { code: "PLAYER_NAME_CONFLICT" } });
+		expect(await conflict.json()).toMatchObject({
+			ok: false,
+			error: { code: "PLAYER_NAME_CONFLICT", message: "That name is already used by a player with an accepted score" },
+		});
 	});
 
 	it("accepts a valid run idempotently and rejects a changed duplicate", async () => {

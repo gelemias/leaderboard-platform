@@ -8,7 +8,7 @@ import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import { issueRunSession } from "./run-sessions";
 import { submitRun } from "./runs";
-import { updatePlayerName } from "./players";
+import { claimPlayerName, updatePlayerName } from "./players";
 import { displayNameSchema } from "../validation/player";
 import { z } from "zod";
 
@@ -47,6 +47,9 @@ mobileRoutes.post("/mobile/games/:slug/access-tokens", async (c) => {
 		// The broker request is the source of truth for the mobile identity. Keep
 		// the game-scoped player binding aligned so later run validation accepts
 		// the same name returned by this exchange.
+		if (!(await claimPlayerName(c.env.DB, game.id, playerId, requestedDisplayName))) {
+			return jsonError(c, 409, "PLAYER_NAME_CONFLICT", "That name is already used by a player with an accepted score");
+		}
 		try {
 			await c.env.DB.prepare(
 				"UPDATE game_players SET display_name = ?, updated_at = ? WHERE game_id = ? AND player_id = ?",
@@ -60,6 +63,9 @@ mobileRoutes.post("/mobile/games/:slug/access-tokens", async (c) => {
 	}
 	if (!player) {
 		const displayName = requestedDisplayName ?? `Mobile ${crypto.randomUUID().slice(0, 8)}`;
+		if (!(await claimPlayerName(c.env.DB, game.id, playerId, displayName))) {
+			return jsonError(c, 409, "PLAYER_NAME_CONFLICT", "That name is already used by a player with an accepted score");
+		}
 		try {
 			const timestamp = Math.floor(Date.now() / 1000);
 			await c.env.DB.batch([
