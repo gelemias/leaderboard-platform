@@ -745,6 +745,68 @@ describe("leaderboard platform foundation", () => {
 		});
 	});
 
+	it("removes a player and their game-scoped leaderboard data", async () => {
+		const playerId = "api-player-removal";
+		await postJson("/v1/games/api-game/players", {
+			player_id: playerId,
+			display_name: "Removal Player",
+		});
+		await issueMobileAccessToken(playerId);
+		await issueRunSession(playerId);
+		await insertRun("api-player-removal-run", "game-api", playerId, "api-v1", 99);
+
+		const removed = await SELF.fetch(apiUrl(`/v1/games/api-game/players/${playerId}`), {
+			method: "DELETE",
+		});
+		expect(removed.status).toBe(200);
+		expect(await removed.json()).toEqual({ ok: true, player_id: playerId, removed: true });
+
+		const board = await SELF.fetch(
+			apiUrl("/v1/games/api-game/leaderboards/all_time?ruleset_version=api-v1"),
+		);
+		expect((await board.json()).entries).not.toEqual(
+			expect.arrayContaining([expect.objectContaining({ player_id: playerId })]),
+		);
+
+		const dependentRows = await env.DB
+			.prepare(
+				`SELECT
+					(SELECT COUNT(*) FROM game_players WHERE game_id = ? AND player_id = ?) AS memberships,
+					(SELECT COUNT(*) FROM runs WHERE game_id = ? AND player_id = ?) AS runs,
+					(SELECT COUNT(*) FROM run_sessions WHERE game_id = ? AND player_id = ?) AS sessions,
+					(SELECT COUNT(*) FROM mobile_access_tokens WHERE game_id = ? AND player_id = ?) AS tokens`,
+			)
+			.bind("game-api", playerId, "game-api", playerId, "game-api", playerId, "game-api", playerId)
+			.first();
+		expect(dependentRows).toEqual({ memberships: 0, runs: 0, sessions: 0, tokens: 0 });
+
+		const reRegistered = await postJson("/v1/games/api-game/players", {
+			player_id: playerId,
+			display_name: "Rejoined Player",
+		});
+		expect(reRegistered.status).toBe(201);
+	});
+
+	it("removes a player through the mobile broker without a platform bearer", async () => {
+		const playerId = "mobile-player-removal";
+		const token = await issueMobileAccessToken(playerId);
+		await insertRun("mobile-player-removal-run", "game-api", playerId, "api-v1", 77);
+
+		const removed = await SELF.fetch(apiUrl(`/v1/mobile/games/api-game/players/${playerId}`), {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${token.access_token}` },
+		});
+		expect(removed.status).toBe(200);
+		expect(await removed.json()).toEqual({ ok: true, player_id: playerId, removed: true });
+
+		const board = await SELF.fetch(
+			apiUrl("/v1/public/games/api-game/leaderboards/all_time?ruleset_version=api-v1"),
+		);
+		expect((await board.json()).entries).not.toEqual(
+			expect.arrayContaining([expect.objectContaining({ player_id: playerId })]),
+		);
+	});
+
 	it("accepts the completed game's player and run-session payloads", async () => {
 		const created = await postJson("/v1/games/jumpy-chewie/players", {
 			player_id: "jumpy-http-contract-player",

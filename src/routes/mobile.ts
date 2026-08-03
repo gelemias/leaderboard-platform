@@ -8,7 +8,7 @@ import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import { issueRunSession } from "./run-sessions";
 import { submitRun } from "./runs";
-import { claimPlayerName, updatePlayerName } from "./players";
+import { claimPlayerName, removePlayer, updatePlayerName } from "./players";
 import { displayNameSchema } from "../validation/player";
 import { z } from "zod";
 
@@ -146,6 +146,15 @@ mobileRoutes.patch(
 	"/mobile/games/:slug/players/:playerId",
 	requireMobileAccessToken,
 	updatePlayerName,
+);
+
+// The app sends only its scoped mobile token. After authenticating and scoping
+// that token, this delegates to the same removal handler used by the platform
+// endpoint without exposing or requiring the platform bearer in the app.
+mobileRoutes.delete(
+	"/mobile/games/:slug/players/:playerId",
+	requireMobileAccessToken,
+	removePlayer,
 );
 
 const allowImplicitRunPlayer = async (c: Context<AppEnv>, next: Next) => {

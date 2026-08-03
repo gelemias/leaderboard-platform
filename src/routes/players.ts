@@ -50,10 +50,13 @@ export async function updatePlayerName(c: Context<AppEnv>) {
 		return jsonError(c, 422, "INVALID_PLAYER", "Player name is invalid", parsed.error.issues);
 	}
 
-	const game = await getGameBySlug(c.env.DB, c.req.param("slug"));
+	const slug = c.req.param("slug");
+	if (!slug) return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
+	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
 	const playerId = c.req.param("playerId");
+	if (!playerId) return jsonError(c, 404, "UNKNOWN_PLAYER", "Player was not specified");
 	const mobileToken = c.get("mobileAccessToken");
 	if (mobileToken && mobileToken.player_id !== playerId) {
 		return jsonError(c, 403, "MOBILE_ACCESS_SCOPE_MISMATCH", "Mobile access is scoped to another player");
@@ -74,6 +77,35 @@ export async function updatePlayerName(c: Context<AppEnv>) {
 	}
 
 	return c.json({ ok: true, player_id: playerId, name: parsed.data.display_name });
+}
+
+export async function removePlayer(c: Context<AppEnv>) {
+	const slug = c.req.param("slug");
+	if (!slug) return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
+	const game = await getGameBySlug(c.env.DB, slug);
+	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
+
+	const playerId = c.req.param("playerId");
+	if (!playerId) return jsonError(c, 404, "UNKNOWN_PLAYER", "Player was not specified");
+	const mobileToken = c.get("mobileAccessToken");
+	if (mobileToken && (mobileToken.game_id !== game.id || mobileToken.player_id !== playerId)) {
+		return jsonError(c, 403, "MOBILE_ACCESS_SCOPE_MISMATCH", "Mobile access is not scoped to this game and player");
+	}
+	const player = await getGamePlayer(c.env.DB, game.id, playerId);
+	if (!player) return jsonError(c, 404, "UNKNOWN_PLAYER", "Player is not registered for this game");
+
+	try {
+		// game_players is the parent of this game's runs, run sessions, and
+		// mobile access tokens, all of which are configured with ON DELETE CASCADE.
+		await c.env.DB
+			.prepare("DELETE FROM game_players WHERE game_id = ? AND player_id = ?")
+			.bind(game.id, playerId)
+			.run();
+	} catch {
+		return jsonError(c, 500, "PLAYER_REMOVAL_FAILED", "Could not remove the player from this game");
+	}
+
+	return c.json({ ok: true, player_id: playerId, removed: true });
 }
 
 playerRoutes.post("/games/:slug/players", async (c) => {
@@ -116,3 +148,4 @@ playerRoutes.post("/games/:slug/players", async (c) => {
 });
 
 playerRoutes.patch("/games/:slug/players/:playerId", updatePlayerName);
+playerRoutes.delete("/games/:slug/players/:playerId", removePlayer);
