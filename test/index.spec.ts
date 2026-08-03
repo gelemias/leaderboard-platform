@@ -498,6 +498,31 @@ describe("leaderboard platform foundation", () => {
 		};
 		expect(namedToken.name).toBe("Paquito");
 
+		const renamedMobile = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/players/mobile-paquito"), {
+			method: "PATCH",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${namedToken.access_token}`,
+			},
+			body: JSON.stringify({ display_name: "Paquito Renamed" }),
+		});
+		expect(renamedMobile.status).toBe(200);
+		expect(await renamedMobile.json()).toMatchObject({
+			ok: true,
+			player_id: playerId,
+			name: "Paquito Renamed",
+		});
+
+		const renamedOtherMobile = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/players/other-mobile"), {
+			method: "PATCH",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${namedToken.access_token}`,
+			},
+			body: JSON.stringify({ display_name: "Other Player" }),
+		});
+		expect(renamedOtherMobile.status).toBe(403);
+
 		const sessionResponse = await SELF.fetch(apiUrl("/v1/mobile/games/api-game/run-sessions"), {
 			method: "POST",
 			headers: {
@@ -521,7 +546,7 @@ describe("leaderboard platform foundation", () => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
-				...validApiRun(session, playerId, 11, "Paquito"),
+				...validApiRun(session, playerId, 11, "Paquito Renamed"),
 				game_build_version: "mobile-paquito",
 			}),
 		});

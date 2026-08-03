@@ -8,6 +8,7 @@ import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import { issueRunSession } from "./run-sessions";
 import { submitRun } from "./runs";
+import { updatePlayerName } from "./players";
 import { displayNameSchema } from "../validation/player";
 import { z } from "zod";
 
@@ -131,6 +132,14 @@ mobileRoutes.post(
 	"/mobile/games/:slug/run-sessions",
 	requireMobileAccessToken,
 	issueRunSession,
+);
+
+// Name edits use the same scoped mobile token as run-session issuance. The
+// handler verifies that the token player matches the URL player before writing.
+mobileRoutes.patch(
+	"/mobile/games/:slug/players/:playerId",
+	requireMobileAccessToken,
+	updatePlayerName,
 );
 
 const allowImplicitRunPlayer = async (c: Context<AppEnv>, next: Next) => {
