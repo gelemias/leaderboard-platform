@@ -32,7 +32,7 @@ function renderComposer(accessToken) {
 			<p>Queue a message for opted-in players. Target individual players or send to everyone who enabled administrator messages.</p>
 			<form id="campaign-form">
 				<div class="target-toolbar">
-					<label>Game slug<input id="game" value="api-game" required /></label>
+					<label>Game<select id="game" required><option value="">Loading games…</option></select></label>
 					<button class="secondary" id="load-players" type="button">Load players</button>
 				</div>
 				<label>Title<input id="title" maxlength="120" required /></label>
@@ -90,8 +90,10 @@ function renderComposer(accessToken) {
 		}
 
 		for (const player of players) {
-			const label = document.createElement("label");
-			label.className = "player-option";
+			const row = document.createElement("div");
+			row.className = "player-option";
+			const recipient = document.createElement("label");
+			recipient.className = "player-recipient";
 			const checkbox = document.createElement("input");
 			checkbox.type = "checkbox";
 			checkbox.checked = selectedPlayerIds.has(player.player_id);
@@ -112,15 +114,47 @@ function renderComposer(accessToken) {
 				? `${player.player_id} · ${player.eligible_installation_count} eligible installation(s)`
 				: `${player.player_id} · no opted-in installation`;
 			copy.append(name, meta);
-			label.append(checkbox, copy);
-			playerList.append(label);
+			recipient.append(checkbox, copy);
+			const remove = document.createElement("button");
+			remove.className = "remove-player";
+			remove.type = "button";
+			remove.textContent = "Remove";
+			remove.title = "Permanently remove this player from this game";
+			remove.addEventListener("click", () => removePlayer(player, remove));
+			row.append(recipient, remove);
+			playerList.append(row);
 		}
 		updateTargetSummary();
 	}
 
+	async function removePlayer(player, removeButton) {
+		if (!window.confirm(`Remove ${player.display_name} (${player.player_id}) from this game? This deletes their leaderboard data, runs, tokens, and push installations.`)) return;
+		const typedId = window.prompt(`Type the player ID to confirm removal:\n${player.player_id}`);
+		if (typedId !== player.player_id) {
+			showStatus("Removal cancelled: player ID did not match.", "error");
+			return;
+		}
+		removeButton.disabled = true;
+		try {
+			const response = await fetch(`/v1/admin/games/${encodeURIComponent(game.value.trim())}/players/${encodeURIComponent(player.player_id)}`, {
+				method: "DELETE",
+				headers: { Authorization: `Bearer ${accessToken}` },
+			});
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result?.error?.message || `Removal failed (${response.status})`);
+			selectedPlayerIds.delete(player.player_id);
+			players = players.filter((candidate) => candidate.player_id !== player.player_id);
+			renderPlayers();
+			showStatus(`${player.display_name} was removed from this game.`, "success");
+		} catch (error) {
+			showStatus(error instanceof Error ? error.message : "Unable to remove player", "error");
+			removeButton.disabled = false;
+		}
+	}
+
 	async function loadPlayers() {
 		if (!game.value.trim()) {
-			showStatus("Enter a game slug first.", "error");
+			showStatus("Select a game first.", "error");
 			game.focus();
 			return;
 		}
@@ -156,12 +190,56 @@ function renderComposer(accessToken) {
 		}
 	}
 
+	async function loadGames() {
+		game.disabled = true;
+		loadPlayersButton.disabled = true;
+		try {
+			const response = await fetch("/v1/admin/games", {
+				headers: { Authorization: `Bearer ${accessToken}` },
+				cache: "no-store",
+			});
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result?.error?.message || `Unable to load games (${response.status})`);
+			game.replaceChildren();
+			for (const item of result.games ?? []) {
+				const option = document.createElement("option");
+				option.value = item.slug;
+				option.textContent = `${item.name} (${item.slug})`;
+				game.append(option);
+			}
+			if (game.options.length === 0) {
+				const option = document.createElement("option");
+				option.value = "";
+				option.textContent = "No active games available";
+				game.append(option);
+				showStatus("No active games are available.", "error");
+			} else {
+				loadPlayersButton.disabled = false;
+				showStatus("Select a game to continue.", "hint");
+			}
+		} catch (error) {
+			game.replaceChildren();
+			const option = document.createElement("option");
+			option.value = "";
+			option.textContent = "Unable to load games";
+			game.append(option);
+			showStatus(error instanceof Error ? error.message : "Unable to load games", "error");
+		} finally {
+			game.disabled = false;
+		}
+	}
+
 	audience.addEventListener("change", () => {
 		targetPicker.hidden = audience.value !== "player_ids";
 		if (audience.value === "player_ids" && players.length === 0) loadPlayers();
 	});
 	loadPlayersButton.addEventListener("click", loadPlayers);
 	searchPlayersButton.addEventListener("click", loadPlayers);
+	game.addEventListener("change", () => {
+		selectedPlayerIds.clear();
+		players = [];
+		if (!targetPicker.hidden) renderPlayers();
+	});
 	playerSearch.addEventListener("keydown", (event) => {
 		if (event.key === "Enter") {
 			event.preventDefault();
@@ -200,4 +278,6 @@ function renderComposer(accessToken) {
 			send.disabled = false;
 		}
 	});
+
+	loadGames();
 }

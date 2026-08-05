@@ -46,6 +46,8 @@ The first API routes are:
 - `PUT /v1/mobile/games/:slug/push-installations/:installationId` registers or rotates an iOS APNs or Android FCM token for the mobile-token player. `PATCH` updates preferences and `DELETE` removes the installation.
 - `GET /v1/admin/games/:slug/players?search=...` returns a bounded, searchable player directory with push-eligibility counts for the admin message composer.
 - `GET /v1/admin/session` is the no-store bearer-token check used to unlock the admin web surface.
+- `GET /v1/admin/games` returns the active games used by the admin web selector.
+- `DELETE /v1/admin/games/:slug/players/:playerId` permanently removes that player's game-scoped leaderboard data, runs, mobile access tokens, and push installations. The shared player identity remains available to other games.
 - `POST /v1/admin/games/:slug/notifications/campaigns` queues an admin message for all opted-in installations or an explicit `player_ids` audience. The platform bearer protects this endpoint; put the admin surface behind Cloudflare Access in production.
 - `GET /v1/admin/notifications/campaigns/:campaignId` returns campaign delivery counts.
 

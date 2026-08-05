@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { requireMobileAccessToken } from "../auth";
 import { getGameBySlug, getGamePlayer } from "../db";
+import { removePlayer } from "./players";
 import { sha256Hex } from "../crypto";
 import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
@@ -215,6 +216,21 @@ adminNotificationRoutes.get("/admin/session", (c) => {
 	c.header("Cache-Control", "no-store");
 	return c.json({ ok: true });
 });
+
+adminNotificationRoutes.get("/admin/games", async (c) => {
+	const games = await c.env.DB
+		.prepare(
+			`SELECT slug, name
+			 FROM games
+			 WHERE status = 'active'
+			 ORDER BY name COLLATE NOCASE ASC, slug ASC`,
+		)
+		.all<{ slug: string; name: string }>();
+	c.header("Cache-Control", "no-store");
+	return c.json({ ok: true, games: games.results });
+});
+
+adminNotificationRoutes.delete("/admin/games/:slug/players/:playerId", removePlayer);
 
 adminNotificationRoutes.post("/admin/games/:slug/notifications/campaigns", async (c) => {
 	const parsed = campaignSchema.safeParse(await readJson(c));

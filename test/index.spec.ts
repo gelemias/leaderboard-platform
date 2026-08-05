@@ -290,6 +290,25 @@ describe("leaderboard platform foundation", () => {
 		]));
 	});
 
+	it("lists active games for the admin selector", async () => {
+		const response = await SELF.fetch(apiUrl("/v1/admin/games"));
+		expect(response.status).toBe(200);
+		const result = (await response.json()) as { games: Array<{ slug: string; name: string }> };
+		expect(result.games).toEqual(expect.arrayContaining([
+			expect.objectContaining({ slug: "api-game", name: "API Game" }),
+		]));
+	});
+
+	it("removes a player and their game-scoped data through the admin route", async () => {
+		const playerId = "admin-removal-player";
+		await postJson("/v1/games/api-game/players", { player_id: playerId, display_name: "Admin Remove" });
+		const response = await SELF.fetch(apiUrl(`/v1/admin/games/api-game/players/${playerId}`), { method: "DELETE" });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ ok: true, player_id: playerId, removed: true });
+		expect(await env.DB.prepare("SELECT 1 AS present FROM game_players WHERE game_id = ? AND player_id = ?").bind("game-api", playerId).first()).toBeNull();
+		expect(await env.DB.prepare("SELECT 1 AS present FROM players WHERE id = ?").bind(playerId).first()).toMatchObject({ present: 1 });
+	});
+
 	it("reports worker and D1 health", async () => {
 		const response = await SELF.fetch("https://example.com/health");
 		expect(response.status).toBe(200);
