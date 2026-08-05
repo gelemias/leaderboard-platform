@@ -3,6 +3,7 @@ import type { AppBindings, RunRow } from "../types";
 import type { RunSubmission } from "../validation/run";
 import { replayStatsMatch } from "./replay-validator";
 import { replayValidatorRegistry } from "./replay-registry";
+import { acceptedRunEventStatement } from "./notifications";
 
 export type RevalidationSummary = {
 	processed: number;
@@ -84,10 +85,17 @@ export async function revalidatePendingRuns(
 			summary.still_pending += 1;
 			continue;
 		}
-		const updated = await db
-			.prepare("UPDATE runs SET verification_status = ? WHERE run_id = ? AND verification_status = 'pending'")
-			.bind(status, row.run_id)
-			.run();
+		const statements = [
+			db.prepare("UPDATE runs SET verification_status = ? WHERE run_id = ? AND verification_status = 'pending'").bind(status, row.run_id),
+		];
+		if (status === "accepted") {
+			statements.push(acceptedRunEventStatement(db, {
+				run_id: row.run_id,
+				game_id: row.game_id,
+				ruleset_version: row.ruleset_version,
+			}));
+		}
+		const [updated] = await db.batch(statements);
 		if (updated.meta.changes === 1) summary[status] += 1;
 	}
 

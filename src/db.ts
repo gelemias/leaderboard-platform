@@ -15,6 +15,11 @@ const REQUIRED_TABLES = [
 	"runs",
 	"run_sessions",
 	"mobile_access_tokens",
+	"push_installations",
+	"notification_events",
+	"leaderboard_positions",
+	"notification_campaigns",
+	"notification_deliveries",
 	"request_limits",
 ] as const;
 

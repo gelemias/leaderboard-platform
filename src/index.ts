@@ -9,6 +9,8 @@ import { mobileRoutes } from "./routes/mobile";
 import { replayValidationRoutes } from "./routes/replay-validation";
 import { publicRoutes } from "./routes/public";
 import { revalidatePendingRuns } from "./domain/revalidate-pending";
+import { notificationRoutes, adminNotificationRoutes } from "./routes/notifications";
+import { processNotifications } from "./domain/notifications";
 import type { AppEnv } from "./types";
 import "./domain/register-simulators";
 
@@ -29,7 +31,7 @@ app.get("/health", async (c) => {
 
 app.use("/v1/*", async (c, next) => {
 	const pathname = new URL(c.req.url).pathname;
-	const isMobileBrokerRoute = /^\/v1\/mobile\/games\/[^/]+\/(?:access-tokens|run-sessions|runs|players\/[^/]+|leaderboards\/[^/]+)$/.test(
+	const isMobileBrokerRoute = /^\/v1\/mobile\/games\/[^/]+\/(?:access-tokens|run-sessions|runs|players\/[^/]+|leaderboards\/[^/]+|push-installations\/[^/]+)$/.test(
 		pathname,
 	);
 	const isLeaderboardRoute = /^\/v1\/games\/[^/]+\/leaderboards\/[^/]+$/.test(pathname);
@@ -45,6 +47,8 @@ app.route("/v1", leaderboardRoutes);
 app.route("/v1", mobileRoutes);
 app.route("/v1", replayValidationRoutes);
 app.route("/v1", publicRoutes);
+app.route("/v1", notificationRoutes);
+app.route("/v1", adminNotificationRoutes);
 
 function isWorkerRoute(pathname: string): boolean {
 	return pathname === "/health" || pathname === "/v1" || pathname.startsWith("/v1/");
@@ -57,6 +61,11 @@ export default {
 			: env.ASSETS.fetch(request);
 	},
 	async scheduled(_controller, env, ctx) {
-		ctx.waitUntil(revalidatePendingRuns(env.DB, env, 25));
+		ctx.waitUntil(
+			(async () => {
+				await revalidatePendingRuns(env.DB, env, 25);
+				await processNotifications(env.DB, env);
+			})(),
+		);
 	},
 } satisfies ExportedHandler<Env>;
