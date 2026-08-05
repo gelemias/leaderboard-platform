@@ -43,6 +43,13 @@ The first API routes are:
 - `GET /v1/games/:slug/leaderboards/:period?ruleset_version=...` for `today`, `this_week`, or `all_time` rankings. Platform bearer tokens and game-scoped mobile access tokens are accepted; mobile requests may use only their token's `player_id` for the optional player window. The equivalent `/v1/mobile/games/:slug/leaderboards/:period` path is also supported.
 - `GET /v1/public/games` returns the active game catalog and leaderboard-eligible rulesets without exposing platform credentials.
 - `GET /v1/public/games/:slug/leaderboards/:period?ruleset_version=...` returns a public, read-only leaderboard feed for the dashboard.
+- `PUT /v1/mobile/games/:slug/push-installations/:installationId` registers or rotates an iOS APNs or Android FCM token for the mobile-token player. `PATCH` updates preferences and `DELETE` removes the installation.
+- `GET /v1/admin/games/:slug/players?search=...` returns a bounded, searchable player directory with push-eligibility counts for the admin message composer.
+- `GET /v1/admin/session` is the no-store bearer-token check used to unlock the admin web surface.
+- `GET /v1/admin/games` returns the active games used by the admin web selector.
+- `DELETE /v1/admin/games/:slug/players/:playerId` permanently removes that player's game-scoped leaderboard data, runs, mobile access tokens, and push installations. The shared player identity remains available to other games.
+- `POST /v1/admin/games/:slug/notifications/campaigns` queues an admin message for all opted-in installations or an explicit `player_ids` audience. The platform bearer protects this endpoint; put the admin surface behind Cloudflare Access in production.
+- `GET /v1/admin/notifications/campaigns/:campaignId` returns campaign delivery counts.
 
 The same Worker deployment also serves the static dashboard at `/`. It discovers games and rulesets through the public catalog API, so adding another active game does not require frontend code changes.
 
@@ -81,6 +88,14 @@ Configure these non-secret production variables in the Worker environment:
 - `LEADERBOARD_RATE_LIMIT_PER_MINUTE` (default `60`)
 - `MOBILE_ACCESS_TOKEN_TTL_SECONDS` (default `900`, capped at `3600`)
 
+Push delivery also requires Worker secrets when enabled:
+
+- `PUSH_TOKEN_ENCRYPTION_KEY`
+- APNs: `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID`, and `APNS_PRIVATE_KEY`
+- FCM: `FCM_SERVICE_ACCOUNT_JSON` (and optionally `FCM_PROJECT_ID`)
+
+The five-minute Cron Trigger revalidates pending runs, reconciles rank snapshots, and drains notification deliveries. Provider failures are retried with backoff; invalid APNs/FCM tokens are disabled automatically. In local development, missing provider credentials result in skipped deliveries rather than external calls.
+
 The limits are persisted in D1 and capped by the Worker at safe configuration maxima. The local environment intentionally remains open when no token is configured so local tests and development do not require a secret.
 
 Run the tests with:
@@ -108,6 +123,10 @@ Wrangler persists local D1 data by default. The default binding uses the develop
 - `runs`: idempotent `run_id`, game/player/ruleset association, score, canonical `game_stats` JSON, compatibility statistics, client/server timestamps, verification status, and replay evidence.
 - `run_sessions`: short-lived server-issued run identity, seed, nonce, hashed token, expiry, and one-time consumption state.
 - `mobile_access_tokens`: short-lived game/player-scoped access tokens used to exchange trusted backend authorization for mobile run-session access. Only the SHA-256 hash is stored.
+- `push_installations`: encrypted, game-scoped provider tokens and per-device opt-in preferences. A player can have multiple installations.
+- `notification_events`: durable accepted-run outbox entries emitted for both immediate and delayed replay acceptance.
+- `leaderboard_positions`: current rank snapshots for today, this week, and all time, used to detect rank losses without notifying on period resets.
+- `notification_campaigns` and `notification_deliveries`: audited admin messages and idempotent provider delivery state.
 - `request_limits`: per-scope subject counters used for submission and leaderboard refresh windows.
 
 Runs have composite foreign keys to both `game_players` and `(game_id, ruleset_version)`. This prevents a run from mixing a player or ruleset from another game. Indexes cover ruleset eligibility/validator selection, player lookup, server receipt order, and accepted-run score ordering.

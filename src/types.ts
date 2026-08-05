@@ -8,6 +8,13 @@ export type AppBindings = Env & {
 	SUBMISSION_RATE_LIMIT_PER_HOUR?: string;
 	LEADERBOARD_RATE_LIMIT_PER_MINUTE?: string;
 	MOBILE_ACCESS_TOKEN_TTL_SECONDS?: string;
+	PUSH_TOKEN_ENCRYPTION_KEY?: string;
+	APNS_TEAM_ID?: string;
+	APNS_KEY_ID?: string;
+	APNS_BUNDLE_ID?: string;
+	APNS_PRIVATE_KEY?: string;
+	FCM_SERVICE_ACCOUNT_JSON?: string;
+	FCM_PROJECT_ID?: string;
 };
 
 export type AppEnv = {
@@ -91,4 +98,52 @@ export type MobileAccessTokenRow = {
 	issued_at: number;
 	expires_at: number;
 	revoked_at: number | null;
+};
+
+export type PushInstallationRow = {
+	id: string;
+	game_id: string;
+	player_id: string;
+	installation_id: string;
+	platform: "ios" | "android";
+	provider: "apns" | "fcm";
+	provider_environment: "sandbox" | "production";
+	token_ciphertext: string;
+	token_hash: string;
+	notifications_enabled: number;
+	rank_updates_enabled: number;
+	admin_messages_enabled: number;
+	created_at: number;
+	updated_at: number;
+	last_seen_at: number;
+	invalidated_at: number | null;
+};
+
+export type LeaderboardPositionRow = {
+	game_id: string;
+	ruleset_version: string;
+	period: "today" | "this_week" | "all_time";
+	period_start: number;
+	player_id: string;
+	rank: number;
+	score: number;
+};
+
+export type NotificationDeliveryRow = {
+	delivery_id: string;
+	installation_id: string;
+	game_id: string;
+	player_id: string;
+	kind: "rank_lost" | "admin_message";
+	campaign_id: string | null;
+	dedupe_key: string;
+	title: string;
+	body: string;
+	data_json: string;
+	status: "pending" | "sending" | "sent" | "failed" | "skipped";
+	attempts: number;
+	available_at: number;
+	last_error: string | null;
+	created_at: number;
+	sent_at: number | null;
 };

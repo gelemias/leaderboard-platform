@@ -22,6 +22,7 @@ import { replayValidatorRegistry } from "../domain/replay-registry";
 import { getRateLimits } from "../config";
 import { normalizeRunSubmission, replayTimelineDurationMs } from "../domain/simulators/jumpy-chewie-translation";
 import { claimPlayerName } from "./players";
+import { acceptedRunEventStatement } from "../domain/notifications";
 
 export const runRoutes = new Hono<AppEnv>();
 
@@ -162,6 +163,13 @@ export async function submitRun(c: Context<AppEnv>) {
 		if (!sameRun(existing, incoming, game.id)) {
 			return jsonError(c, 409, "RUN_ID_CONFLICT", "Run ID was already used for different data");
 		}
+		if (existing.verification_status === "accepted") {
+			await acceptedRunEventStatement(c.env.DB, {
+				run_id: existing.run_id,
+				game_id: existing.game_id,
+				ruleset_version: existing.ruleset_version,
+			}).run();
+		}
 		return c.json({
 			ok: true,
 			duplicate: true,
@@ -218,7 +226,7 @@ export async function submitRun(c: Context<AppEnv>) {
 
 	const serverReceivedAt = serverNow;
 	try {
-		const results = await c.env.DB.batch([
+		const statements = [
 		c.env.DB.prepare(
 			`INSERT INTO runs (
 				run_id, game_id, player_id, ruleset_version, score, jumps, near_misses,
@@ -262,11 +270,26 @@ export async function submitRun(c: Context<AppEnv>) {
 				"UPDATE run_sessions SET status = 'submitted', consumed_at = ? WHERE run_id = ? AND status = 'issued'",
 			)
 			.bind(serverReceivedAt, incoming.run_id),
-		]);
+		];
+		if (verificationStatus === "accepted") {
+			statements.push(acceptedRunEventStatement(c.env.DB, {
+				run_id: incoming.run_id,
+				game_id: game.id,
+				ruleset_version: incoming.ruleset_version,
+			}));
+		}
+		const results = await c.env.DB.batch(statements);
 		if (results[1].meta.changes !== 1) throw new Error("Run session was consumed concurrently");
 	} catch {
 		const raced = await getRunById(c.env.DB, incoming.run_id);
 		if (sameRun(raced, incoming, game.id)) {
+			if (raced?.verification_status === "accepted") {
+				await acceptedRunEventStatement(c.env.DB, {
+					run_id: raced.run_id,
+					game_id: raced.game_id,
+					ruleset_version: raced.ruleset_version,
+				}).run();
+			}
 			return c.json({
 				ok: true,
 				duplicate: true,

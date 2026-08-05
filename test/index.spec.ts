@@ -12,6 +12,10 @@ import {
 	translateJumpyReplayContract,
 } from "../src/domain/simulators/jumpy-chewie-translation";
 import { revalidatePendingRuns } from "../src/domain/revalidate-pending";
+import {
+	acceptedRunEventStatement,
+	processNotificationEvents,
+} from "../src/domain/notifications";
 import { tokenMatches } from "../src/auth";
 import { getRateLimits } from "../src/config";
 
@@ -172,6 +176,139 @@ beforeAll(async () => {
 });
 
 describe("leaderboard platform foundation", () => {
+	it("registers, updates, and removes an opted-in push installation", async () => {
+		const playerId = "push-installation-player";
+		await postJson("/v1/games/api-game/players", { player_id: playerId, display_name: "Push Player" });
+		const mobileToken = await issueMobileAccessToken(playerId);
+		const path = "/v1/mobile/games/api-game/push-installations/test-installation";
+		const registered = await SELF.fetch(apiUrl(path), {
+			method: "PUT",
+			headers: { Authorization: `Bearer ${mobileToken.access_token}`, "content-type": "application/json" },
+			body: JSON.stringify({
+				platform: "android",
+				provider: "fcm",
+				token: "fcm-token-for-push-installation",
+				notifications_enabled: true,
+				rank_updates_enabled: true,
+				admin_messages_enabled: false,
+			}),
+		});
+		expect(registered.status).toBe(200);
+		const stored = await env.DB
+			.prepare("SELECT player_id, provider, token_ciphertext, notifications_enabled, rank_updates_enabled FROM push_installations WHERE game_id = ? AND installation_id = ?")
+			.bind("game-api", "test-installation")
+			.first();
+		expect(stored).toMatchObject({ player_id: playerId, provider: "fcm", notifications_enabled: 1, rank_updates_enabled: 1 });
+		expect(stored?.token_ciphertext).not.toBe("fcm-token-for-push-installation");
+
+		const preferences = await SELF.fetch(apiUrl(path), {
+			method: "PATCH",
+			headers: { Authorization: `Bearer ${mobileToken.access_token}`, "content-type": "application/json" },
+			body: JSON.stringify({ rank_updates_enabled: false, admin_messages_enabled: true }),
+		});
+		expect(preferences.status).toBe(200);
+		const removed = await SELF.fetch(apiUrl(path), {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${mobileToken.access_token}` },
+		});
+		expect(removed.status).toBe(200);
+	});
+
+	it("creates rank-loss deliveries for accepted runs, including the all-time board", async () => {
+		const firstPlayer = "push-rank-first";
+		const secondPlayer = "push-rank-second";
+		await postJson("/v1/games/api-game/players", { player_id: firstPlayer, display_name: "Rank First" });
+		await postJson("/v1/games/api-game/players", { player_id: secondPlayer, display_name: "Rank Second" });
+		const firstToken = await issueMobileAccessToken(firstPlayer);
+		await SELF.fetch(apiUrl("/v1/mobile/games/api-game/push-installations/rank-installation"), {
+			method: "PUT",
+			headers: { Authorization: `Bearer ${firstToken.access_token}`, "content-type": "application/json" },
+			body: JSON.stringify({ platform: "android", provider: "fcm", token: "fcm-token-for-rank-installation", notifications_enabled: true, rank_updates_enabled: true }),
+		});
+		await insertRun("push-rank-first-run", "game-api", firstPlayer, "api-v1", 10);
+		await env.DB.batch([
+			acceptedRunEventStatement(env.DB, { run_id: "push-rank-first-run", game_id: "game-api", ruleset_version: "api-v1" }),
+		]);
+		await processNotificationEvents(env.DB);
+		await insertRun("push-rank-second-run", "game-api", secondPlayer, "api-v1", 20);
+		await env.DB.batch([
+			acceptedRunEventStatement(env.DB, { run_id: "push-rank-second-run", game_id: "game-api", ruleset_version: "api-v1" }),
+		]);
+		await processNotificationEvents(env.DB);
+		const deliveries = await env.DB
+			.prepare("SELECT kind, body FROM notification_deliveries WHERE player_id = ? AND kind = 'rank_lost'")
+			.bind(firstPlayer)
+			.all<{ kind: string; body: string }>();
+		expect(deliveries.results.length).toBeGreaterThanOrEqual(3);
+		expect(deliveries.results.some((delivery) => delivery.body.includes("#1 to #2"))).toBe(true);
+	});
+
+	it("queues an admin campaign only for installations that opted into admin messages", async () => {
+		const playerId = "push-admin-player";
+		await postJson("/v1/games/api-game/players", { player_id: playerId, display_name: "Admin Push" });
+		const mobileToken = await issueMobileAccessToken(playerId);
+		await SELF.fetch(apiUrl("/v1/mobile/games/api-game/push-installations/admin-installation"), {
+			method: "PUT",
+			headers: { Authorization: `Bearer ${mobileToken.access_token}`, "content-type": "application/json" },
+			body: JSON.stringify({ platform: "android", provider: "fcm", token: "fcm-token-for-admin-installation", notifications_enabled: true, admin_messages_enabled: true }),
+		});
+		const response = await postJson("/v1/admin/games/api-game/notifications/campaigns", {
+			title: "Tournament",
+			body: "The tournament starts now.",
+			audience: "all_opted_in",
+		});
+		expect(response.status).toBe(201);
+		expect(await response.json()).toMatchObject({ ok: true, recipients: 1 });
+	});
+
+	it("lists searchable admin message targets with push eligibility", async () => {
+		const eligiblePlayer = "push-directory-eligible";
+		const unavailablePlayer = "push-directory-unavailable";
+		await postJson("/v1/games/api-game/players", { player_id: eligiblePlayer, display_name: "Directory Target" });
+		await postJson("/v1/games/api-game/players", { player_id: unavailablePlayer, display_name: "Target Offline" });
+		const mobileToken = await issueMobileAccessToken(eligiblePlayer);
+		await SELF.fetch(apiUrl("/v1/mobile/games/api-game/push-installations/directory-installation"), {
+			method: "PUT",
+			headers: { Authorization: `Bearer ${mobileToken.access_token}`, "content-type": "application/json" },
+			body: JSON.stringify({
+				platform: "android",
+				provider: "fcm",
+				token: "fcm-token-for-directory-installation",
+				notifications_enabled: true,
+				admin_messages_enabled: true,
+			}),
+		});
+
+		const response = await SELF.fetch(apiUrl("/v1/admin/games/api-game/players?search=Target"));
+		expect(response.status).toBe(200);
+		const result = (await response.json()) as {
+			players: Array<{ player_id: string; display_name: string; installation_count: number; eligible_installation_count: number }>;
+		};
+		expect(result.players).toEqual(expect.arrayContaining([
+			expect.objectContaining({ player_id: eligiblePlayer, installation_count: 1, eligible_installation_count: 1 }),
+			expect.objectContaining({ player_id: unavailablePlayer, installation_count: 0, eligible_installation_count: 0 }),
+		]));
+	});
+
+	it("lists active games for the admin selector", async () => {
+		const response = await SELF.fetch(apiUrl("/v1/admin/games"));
+		expect(response.status).toBe(200);
+		const result = (await response.json()) as { games: Array<{ slug: string; name: string }> };
+		expect(result.games).toEqual(expect.arrayContaining([
+			expect.objectContaining({ slug: "api-game", name: "API Game" }),
+		]));
+	});
+
+	it("removes a player and their game-scoped data through the admin route", async () => {
+		const playerId = "admin-removal-player";
+		await postJson("/v1/games/api-game/players", { player_id: playerId, display_name: "Admin Remove" });
+		const response = await SELF.fetch(apiUrl(`/v1/admin/games/api-game/players/${playerId}`), { method: "DELETE" });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ ok: true, player_id: playerId, removed: true });
+		expect(await env.DB.prepare("SELECT 1 AS present FROM game_players WHERE game_id = ? AND player_id = ?").bind("game-api", playerId).first()).toBeNull();
+		expect(await env.DB.prepare("SELECT 1 AS present FROM players WHERE id = ?").bind(playerId).first()).toMatchObject({ present: 1 });
+	});
+
 	it("reports worker and D1 health", async () => {
 		const response = await SELF.fetch("https://example.com/health");
 		expect(response.status).toBe(200);
@@ -186,8 +323,13 @@ describe("leaderboard platform foundation", () => {
 		expect(await listRequiredTables(env.DB)).toEqual([
 			"game_players",
 			"games",
+			"leaderboard_positions",
 			"mobile_access_tokens",
+			"notification_campaigns",
+			"notification_deliveries",
+			"notification_events",
 			"players",
+			"push_installations",
 			"request_limits",
 			"rulesets",
 			"run_sessions",
