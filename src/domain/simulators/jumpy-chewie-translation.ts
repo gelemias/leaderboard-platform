@@ -8,7 +8,8 @@ import {
 import type { RunSubmissionRequest } from "../../validation/run";
 
 const JUMPY_GAME_ID = "jumpy-chewie";
-const JUMPY_RULESET_VERSION = "jumpy-chewie-2";
+const JUMPY_RULESET_VERSION = "jumpy-chewie-3";
+const JUMPY_SUPPORTED_RULESET_VERSIONS = ["jumpy-chewie-2", JUMPY_RULESET_VERSION] as const;
 const JUMPY_CONTRACT_VERSION = 1;
 const JUMPY_TIMESTEP_MS = 8;
 const JUMPY_MAX_DURATION_MS = 300_000;
@@ -18,7 +19,7 @@ const jumpyReplayContractSchema = z
 	.object({
 		contract_version: z.literal(JUMPY_CONTRACT_VERSION),
 		game_id: z.literal(JUMPY_GAME_ID),
-		ruleset_version: z.literal(JUMPY_RULESET_VERSION),
+		ruleset_version: z.enum(JUMPY_SUPPORTED_RULESET_VERSIONS),
 		game_build_version: z.string().min(1).max(128),
 		run_seed: z.number().int().nonnegative(),
 		run_mode: z.literal("normal"),

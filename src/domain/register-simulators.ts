@@ -19,3 +19,9 @@ replayValidatorRegistry.register(
 	"0.1.0",
 	new JumpyChewieHttpValidator(),
 );
+replayValidatorRegistry.register(
+	"game-jumpy-chewie",
+	"jumpy-chewie-3",
+	"0.1.0",
+	new JumpyChewieHttpValidator(),
+);

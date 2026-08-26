@@ -22,6 +22,7 @@ export type AppEnv = {
 	Variables: {
 		mobileAccessToken?: MobileAccessTokenRow;
 		allowImplicitRunPlayer?: boolean;
+		allowOfflineRun?: boolean;
 	};
 };
 

@@ -45,4 +45,8 @@ export const mobileRunSubmissionRequestSchema = runSubmissionRequestSchema.exten
 	player_id: z.string().min(1).max(128).optional(),
 });
 
+export const mobileOfflineRunSubmissionRequestSchema = runSubmissionRequestSchema
+	.omit({ session_token: true, session_nonce: true })
+	.extend({ player_id: z.string().min(1).max(128).optional() });
+
 export type RunSubmissionRequest = z.infer<typeof runSubmissionRequestSchema>;

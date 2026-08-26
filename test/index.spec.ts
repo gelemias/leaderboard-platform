@@ -382,7 +382,7 @@ describe("leaderboard platform foundation", () => {
 				expect.objectContaining({
 					slug: "jumpy-chewie",
 					name: "Jumpy Chewie",
-					rulesets: [{ version: "jumpy-chewie-2" }],
+					rulesets: [{ version: "jumpy-chewie-2" }, { version: "jumpy-chewie-3" }],
 				}),
 			]),
 		});
@@ -949,6 +949,22 @@ describe("leaderboard platform foundation", () => {
 		);
 	});
 
+	it("authorizes mobile push cleanup without requiring the platform bearer", async () => {
+		const token = await issueMobileAccessToken("mobile-push-cleanup");
+		const response = await SELF.fetch(
+			apiUrl("/v1/mobile/games/api-game/push-installations/missing-installation"),
+			{
+				method: "DELETE",
+				headers: { Authorization: `Bearer ${token.access_token}` },
+			},
+		);
+		expect(response.status).toBe(404);
+		expect(await response.json()).toMatchObject({
+			ok: false,
+			error: { code: "UNKNOWN_PUSH_INSTALLATION" },
+		});
+	});
+
 	it("accepts the completed game's player and run-session payloads", async () => {
 		const created = await postJson("/v1/games/jumpy-chewie/players", {
 			player_id: "jumpy-http-contract-player",
@@ -983,6 +999,92 @@ describe("leaderboard platform foundation", () => {
 			ruleset_version: "jumpy-chewie-2",
 			game_build_version: "0.1.0",
 		});
+	});
+
+	it("accepts an authenticated deferred offline run without session credentials", async () => {
+		const playerId = "jumpy-offline-player";
+		const tokenResponse = await postJson("/v1/mobile/games/jumpy-chewie/access-tokens", {
+			player_id: playerId,
+			display_name: "Offline Chewie",
+		});
+		expect(tokenResponse.status).toBe(201);
+		const token = (await tokenResponse.json()) as { access_token: string };
+		const body = {
+			run_id: "jumpy-offline-run",
+			player_id: playerId,
+			name: "Offline Chewie",
+			ruleset_version: "jumpy-chewie-3",
+			score: 12,
+			jumps: 12,
+			near_misses: 0,
+			highest_combo: 1,
+			run_seed: 987654,
+			run_duration: 20,
+			game_build_version: "0.1.0",
+			run_mode: "normal",
+			client_completed_at: now(),
+			power_up_types_collected: [],
+			power_up_collection_counts: {},
+			power_up_activation_counts: {},
+			shield_breaks: 0,
+			double_gum_boosted_jumps: 0,
+			jump_score_points: 12,
+			double_gum_bonus_points: 0,
+			golden_treat_bonus_points: 0,
+			game_stats: { score: 12 },
+			input_trace: [],
+		};
+
+		const unauthenticated = await postJson("/v1/mobile/games/jumpy-chewie/offline-runs", body);
+		expect(unauthenticated.status).toBe(401);
+
+		const first = await SELF.fetch(apiUrl("/v1/mobile/games/jumpy-chewie/offline-runs"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${token.access_token}`,
+			},
+			body: JSON.stringify(body),
+		});
+		expect(first.status).toBe(201);
+		expect(await first.json()).toMatchObject({
+			ok: true,
+			duplicate: false,
+			run_id: body.run_id,
+			verification_status: "accepted",
+			verification_code: "DEFERRED_MOBILE_SUBMISSION",
+		});
+		expect(
+			await env.DB.prepare("SELECT run_session_id FROM runs WHERE run_id = ?").bind(body.run_id).first(),
+		).toEqual({ run_session_id: null });
+
+		const duplicate = await SELF.fetch(apiUrl("/v1/mobile/games/jumpy-chewie/offline-runs"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${token.access_token}`,
+			},
+			body: JSON.stringify(body),
+		});
+		expect(duplicate.status).toBe(200);
+		expect(await duplicate.json()).toMatchObject({ ok: true, duplicate: true, run_id: body.run_id });
+
+		const spoofed = await SELF.fetch(apiUrl("/v1/mobile/games/jumpy-chewie/offline-runs"), {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${token.access_token}`,
+			},
+			body: JSON.stringify({ ...body, run_id: "jumpy-offline-spoof", player_id: "someone-else" }),
+		});
+		expect(spoofed.status).toBe(403);
+
+		const board = await SELF.fetch(
+			apiUrl("/v1/public/games/jumpy-chewie/leaderboards/all_time?ruleset_version=jumpy-chewie-3"),
+		);
+		expect((await board.json()).entries).toEqual(
+			expect.arrayContaining([expect.objectContaining({ player_id: playerId, score: 12 })]),
+		);
 	});
 
 	it("releases unaccepted names but reserves names with accepted scores", async () => {

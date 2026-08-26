@@ -224,5 +224,17 @@ export async function seedDevelopmentGame(db: D1Database): Promise<void> {
 				now,
 				"jumpy-chewie-2",
 			),
+		db
+			.prepare(
+				"INSERT OR IGNORE INTO rulesets (id, game_id, version, eligible_for_leaderboard, created_at, validator_key) VALUES (?, ?, ?, ?, ?, ?)",
+			)
+			.bind(
+				"ruleset-jumpy-chewie-3",
+				"game-jumpy-chewie",
+				"jumpy-chewie-3",
+				1,
+				now,
+				"jumpy-chewie-3",
+			),
 	]);
 }
