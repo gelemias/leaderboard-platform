@@ -12,6 +12,7 @@ import { sha256Hex } from "../crypto";
 import { jsonError, readJson } from "../http";
 import type { AppEnv } from "../types";
 import {
+	mobileOfflineRunSubmissionRequestSchema,
 	mobileRunSubmissionRequestSchema,
 	runSubmissionRequestSchema,
 	type RunSubmissionRequest,
@@ -75,9 +76,14 @@ function sameRun(existing: Awaited<ReturnType<typeof getRunById>>, incoming: Run
 
 export async function submitRun(c: Context<AppEnv>) {
 	const allowImplicitRunPlayer = c.get("allowImplicitRunPlayer") === true;
-	const parsed = (allowImplicitRunPlayer ? mobileRunSubmissionRequestSchema : runSubmissionRequestSchema).safeParse(
-		await readJson(c),
-	);
+	const allowOfflineRun = c.get("allowOfflineRun") === true;
+	const parsed = (
+		allowOfflineRun
+			? mobileOfflineRunSubmissionRequestSchema
+			: allowImplicitRunPlayer
+				? mobileRunSubmissionRequestSchema
+				: runSubmissionRequestSchema
+	).safeParse(await readJson(c));
 	if (!parsed.success) {
 		const schemaFailure = parsed.error.issues
 			.map((issue) => `${issue.path.length > 0 ? issue.path.join(".") : "body"}: ${issue.message}`)
@@ -94,17 +100,43 @@ export async function submitRun(c: Context<AppEnv>) {
 	const game = await getGameBySlug(c.env.DB, slug);
 	if (!game || game.status !== "active") return jsonError(c, 404, "UNKNOWN_GAME", "Game was not found");
 
-	const session = await getRunSessionByTokenHash(c.env.DB, await sha256Hex(parsed.data.session_token));
-	if (!session) return jsonError(c, 422, "INVALID_RUN_SESSION", "Run session token is invalid");
-	const playerId = parsed.data.player_id ?? (allowImplicitRunPlayer ? session.player_id : undefined);
+	const offlineMobileToken = allowOfflineRun ? c.get("mobileAccessToken") : undefined;
+	if (
+		offlineMobileToken &&
+		(offlineMobileToken.game_id !== game.id ||
+			(parsed.data.player_id !== undefined && parsed.data.player_id !== offlineMobileToken.player_id))
+	) {
+		return jsonError(c, 403, "MOBILE_ACCESS_SCOPE_MISMATCH", "Mobile access is not scoped to this game and player");
+	}
+
+	const submittedSessionToken =
+		"session_token" in parsed.data && typeof parsed.data.session_token === "string"
+			? parsed.data.session_token
+			: null;
+	const session = submittedSessionToken
+		? await getRunSessionByTokenHash(c.env.DB, await sha256Hex(submittedSessionToken))
+		: null;
+	if (!allowOfflineRun && !session) return jsonError(c, 422, "INVALID_RUN_SESSION", "Run session token is invalid");
+	const playerId = allowOfflineRun
+		? offlineMobileToken?.player_id
+		: parsed.data.player_id ?? (allowImplicitRunPlayer ? session?.player_id : undefined);
 	if (!playerId) return jsonError(c, 422, "INVALID_RUN", "player_id is required for a platform run submission");
 	const incoming = normalizeRunSubmission({
 		...parsed.data,
 		player_id: playerId,
+		...(allowOfflineRun
+			? {
+					session_token: "offline-mobile-authenticated-submission",
+					session_nonce: "00000000-0000-0000-0000-000000000000",
+			  }
+			: {}),
 	} as RunSubmissionRequest);
 	const ruleset = await getRuleset(c.env.DB, game.id, incoming.ruleset_version);
 	if (!ruleset || ruleset.eligible_for_leaderboard !== 1) {
 		return jsonError(c, 422, "INELIGIBLE_RULESET", "Ruleset is not eligible for this leaderboard");
+	}
+	if (allowOfflineRun && !["jumpy-chewie-2", "jumpy-chewie-3"].includes(ruleset.validator_key)) {
+		return jsonError(c, 422, "OFFLINE_RUN_UNSUPPORTED", "This game does not accept deferred offline runs");
 	}
 
 	const player = await getGamePlayer(c.env.DB, game.id, incoming.player_id);
@@ -129,21 +161,23 @@ export async function submitRun(c: Context<AppEnv>) {
 		});
 	}
 
-	const sessionMismatches = [
-		["run_id", session.run_id !== incoming.run_id],
-		["game_id", session.game_id !== game.id],
-		["player_id", session.player_id !== incoming.player_id],
-		["ruleset_version", session.ruleset_version !== incoming.ruleset_version],
-		["game_build_version", session.game_build_version !== incoming.game_build_version],
-		["run_seed", session.run_seed !== incoming.run_seed],
-		["session_nonce", session.nonce !== incoming.session_nonce],
-	]
-		.filter(([, mismatch]) => mismatch)
-		.map(([field]) => field);
-	if (sessionMismatches.length > 0) {
-		return jsonError(c, 409, "RUN_SESSION_MISMATCH", "Run does not match its issued session", {
-			mismatched_fields: sessionMismatches,
-		});
+	if (session) {
+		const sessionMismatches = [
+			["run_id", session.run_id !== incoming.run_id],
+			["game_id", session.game_id !== game.id],
+			["player_id", session.player_id !== incoming.player_id],
+			["ruleset_version", session.ruleset_version !== incoming.ruleset_version],
+			["game_build_version", session.game_build_version !== incoming.game_build_version],
+			["run_seed", session.run_seed !== incoming.run_seed],
+			["session_nonce", session.nonce !== incoming.session_nonce],
+		]
+			.filter(([, mismatch]) => mismatch)
+			.map(([field]) => field);
+		if (sessionMismatches.length > 0) {
+			return jsonError(c, 409, "RUN_SESSION_MISMATCH", "Run does not match its issued session", {
+				mismatched_fields: sessionMismatches,
+			});
+		}
 	}
 
 	const serverNow = Math.floor(Date.now() / 1000);
@@ -151,7 +185,7 @@ export async function submitRun(c: Context<AppEnv>) {
 	if (lastTraceEvent && lastTraceEvent.t_ms > replayTimelineDurationMs(incoming)) {
 		return jsonError(c, 422, "INVALID_INPUT_TRACE", "Input trace extends beyond the run duration");
 	}
-	if (session.status === "issued" && serverNow > session.expires_at) {
+	if (session?.status === "issued" && serverNow > session.expires_at) {
 		await c.env.DB.prepare("UPDATE run_sessions SET status = 'expired' WHERE run_id = ? AND status = 'issued'")
 			.bind(session.run_id)
 			.run();
@@ -178,7 +212,7 @@ export async function submitRun(c: Context<AppEnv>) {
 			verification_status: existing.verification_status,
 		});
 	}
-	if (session.status !== "issued") {
+	if (session && session.status !== "issued") {
 		return jsonError(c, 409, "RUN_SESSION_CONSUMED", "Run session has already been consumed");
 	}
 
@@ -200,9 +234,9 @@ export async function submitRun(c: Context<AppEnv>) {
 		.validate({
 			run: { ...incoming, game_id: game.id },
 			inputTrace: incoming.input_trace,
-			runSeed: session.run_seed,
-			rulesetVersion: session.ruleset_version,
-			gameBuildVersion: session.game_build_version,
+			runSeed: session?.run_seed ?? incoming.run_seed,
+			rulesetVersion: session?.ruleset_version ?? incoming.ruleset_version,
+			gameBuildVersion: session?.game_build_version ?? incoming.game_build_version,
 		},
 		{ env: c.env },
 	);
@@ -214,7 +248,9 @@ export async function submitRun(c: Context<AppEnv>) {
 				: "pending";
 	const verificationCode =
 		verificationStatus === "accepted"
-			? replayResult.reason === "TRUSTED_SUBMISSION"
+			? allowOfflineRun && replayResult.reason === "TRUSTED_SUBMISSION"
+				? "DEFERRED_MOBILE_SUBMISSION"
+				: replayResult.reason === "TRUSTED_SUBMISSION"
 				? "TRUSTED_SUBMISSION"
 				: "REPLAY_VALIDATED"
 			: verificationStatus === "rejected"
@@ -225,9 +261,7 @@ export async function submitRun(c: Context<AppEnv>) {
 	}
 
 	const serverReceivedAt = serverNow;
-	try {
-		const statements = [
-		c.env.DB.prepare(
+	const insertRun = c.env.DB.prepare(
 			`INSERT INTO runs (
 				run_id, game_id, player_id, ruleset_version, score, jumps, near_misses,
 				highest_combo, run_seed, run_duration, game_build_version, run_mode,
@@ -262,24 +296,34 @@ export async function submitRun(c: Context<AppEnv>) {
 				incoming.jump_score_points,
 				incoming.double_gum_bonus_points,
 				incoming.golden_treat_bonus_points,
-				incoming.run_id,
+				session ? incoming.run_id : null,
 				stableJson(incoming.input_trace),
 				stableJson(incoming.game_stats),
-			),
-		c.env.DB.prepare(
-				"UPDATE run_sessions SET status = 'submitted', consumed_at = ? WHERE run_id = ? AND status = 'issued'",
-			)
-			.bind(serverReceivedAt, incoming.run_id),
-		];
-		if (verificationStatus === "accepted") {
-			statements.push(acceptedRunEventStatement(c.env.DB, {
+			);
+	const statements = [insertRun];
+	if (session) {
+		statements.push(
+			c.env.DB
+				.prepare(
+					"UPDATE run_sessions SET status = 'submitted', consumed_at = ? WHERE run_id = ? AND status = 'issued'",
+				)
+				.bind(serverReceivedAt, incoming.run_id),
+		);
+	}
+	if (verificationStatus === "accepted") {
+		statements.push(
+			acceptedRunEventStatement(c.env.DB, {
 				run_id: incoming.run_id,
 				game_id: game.id,
 				ruleset_version: incoming.ruleset_version,
-			}));
-		}
+			}),
+		);
+	}
+	try {
 		const results = await c.env.DB.batch(statements);
-		if (results[1].meta.changes !== 1) throw new Error("Run session was consumed concurrently");
+		if (session) {
+			if (results[1].meta.changes !== 1) throw new Error("Run session was consumed concurrently");
+		}
 	} catch {
 		const raced = await getRunById(c.env.DB, incoming.run_id);
 		if (sameRun(raced, incoming, game.id)) {

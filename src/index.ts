@@ -31,7 +31,7 @@ app.get("/health", async (c) => {
 
 app.use("/v1/*", async (c, next) => {
 	const pathname = new URL(c.req.url).pathname;
-	const isMobileBrokerRoute = /^\/v1\/mobile\/games\/[^/]+\/(?:access-tokens|run-sessions|runs|players\/[^/]+|leaderboards\/[^/]+|push-installations\/[^/]+)$/.test(
+	const isMobileBrokerRoute = /^\/v1\/mobile\/games\/[^/]+\/(?:access-tokens|run-sessions|runs|offline-runs|players\/[^/]+|push-installations\/[^/]+|leaderboards\/[^/]+)$/.test(
 		pathname,
 	);
 	const isLeaderboardRoute = /^\/v1\/games\/[^/]+\/leaderboards\/[^/]+$/.test(pathname);

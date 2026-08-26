@@ -162,6 +162,21 @@ const allowImplicitRunPlayer = async (c: Context<AppEnv>, next: Next) => {
 	return next();
 };
 
+const allowOfflineRun = async (c: Context<AppEnv>, next: Next) => {
+	c.set("allowOfflineRun", true);
+	return next();
+};
+
 // A run submission is authorized by the one-time session_token and session_nonce
 // in the body, so this mobile route intentionally does not accept a platform token.
 mobileRoutes.post("/mobile/games/:slug/runs", allowImplicitRunPlayer, submitRun);
+
+// A cold-start offline run cannot have a server-issued one-time session. The
+// scoped mobile token binds the deferred result to its durable player instead.
+mobileRoutes.post(
+	"/mobile/games/:slug/offline-runs",
+	requireMobileAccessToken,
+	allowImplicitRunPlayer,
+	allowOfflineRun,
+	submitRun,
+);
