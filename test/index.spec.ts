@@ -10,6 +10,7 @@ import { replayValidatorRegistry } from "../src/domain/replay-registry";
 import {
 	normalizeReplayInputTrace,
 	translateJumpyReplayContract,
+	translatePlatformInputTrace,
 } from "../src/domain/simulators/jumpy-chewie-translation";
 import { revalidatePendingRuns } from "../src/domain/revalidate-pending";
 import {
@@ -768,6 +769,79 @@ describe("leaderboard platform foundation", () => {
 		expect(result.issues.map((issue) => issue.message)).toContain("run cannot pause while already paused");
 	});
 
+	it("accepts a revived run and carries the revive through translation", () => {
+		const result = translateJumpyReplayContract({
+			contract_version: 1,
+			game_id: "jumpy-chewie",
+			ruleset_version: "jumpy-chewie-3",
+			game_build_version: "0.1.0",
+			run_seed: 7,
+			run_mode: "normal",
+			simulation_timestep_ms: 8,
+			run_duration_ms: 64,
+			input_trace: [
+				{ type: "swipe", timestamp_ms: 0, direction: "up" },
+				{ type: "revive", timestamp_ms: 32 },
+				{ type: "swipe", timestamp_ms: 40, direction: "up" },
+			],
+		});
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		// The revive stays on the same ruleset as every other run: it is a new
+		// input, not a new rule, so nothing that validated under jumpy-chewie-3
+		// validates differently now.
+		expect(result.replay.rulesetVersion).toBe("jumpy-chewie-3");
+		expect(result.replay.inputTrace).toEqual([
+			{ type: "swipe", t_ms: 0, direction: "up" },
+			{ type: "revive", t_ms: 32 },
+			{ type: "swipe", t_ms: 40, direction: "up" },
+		]);
+		expect(translatePlatformInputTrace(result.replay.inputTrace)).toEqual([
+			{ type: "swipe", timestamp_ms: 0, direction: "up" },
+			{ type: "revive", timestamp_ms: 32 },
+			{ type: "swipe", timestamp_ms: 40, direction: "up" },
+		]);
+	});
+
+	it("rejects a second revive and a revive inside a pause", () => {
+		const twice = translateJumpyReplayContract({
+			contract_version: 1,
+			game_id: "jumpy-chewie",
+			ruleset_version: "jumpy-chewie-3",
+			game_build_version: "0.1.0",
+			run_seed: 7,
+			run_mode: "normal",
+			simulation_timestep_ms: 8,
+			run_duration_ms: 64,
+			input_trace: [
+				{ type: "revive", timestamp_ms: 8 },
+				{ type: "revive", timestamp_ms: 16 },
+			],
+		});
+		expect(twice.ok).toBe(false);
+		if (twice.ok) return;
+		expect(twice.issues.map((issue) => issue.message)).toContain("a run may be revived at most once");
+
+		const paused = translateJumpyReplayContract({
+			contract_version: 1,
+			game_id: "jumpy-chewie",
+			ruleset_version: "jumpy-chewie-3",
+			game_build_version: "0.1.0",
+			run_seed: 7,
+			run_mode: "normal",
+			simulation_timestep_ms: 8,
+			run_duration_ms: 64,
+			input_trace: [
+				{ type: "pause", timestamp_ms: 8 },
+				{ type: "revive", timestamp_ms: 16 },
+			],
+		});
+		expect(paused.ok).toBe(false);
+		if (paused.ok) return;
+		expect(paused.issues.map((issue) => issue.message)).toContain("a paused run has nothing to revive");
+	});
+
 	it("normalizes Jumpy-shaped evidence before storing a run", async () => {
 		await postJson("/v1/games/api-game/players", {
 			player_id: "api-player-jumpy-translation",
@@ -799,6 +873,37 @@ describe("leaderboard platform foundation", () => {
 		expect(JSON.parse(stored?.input_trace ?? "[]")).toEqual([
 			{ type: "swipe", t_ms: 0, direction: "right" },
 			{ type: "tap_pickup", t_ms: 1600, pickup_id: "7" },
+		]);
+	});
+
+	it("stores a revived run's evidence without losing the revive", async () => {
+		await postJson("/v1/games/api-game/players", {
+			player_id: "api-player-jumpy-revive",
+			display_name: "Jumpy Revive",
+		});
+		const session = await issueRunSession("api-player-jumpy-revive");
+		const body = {
+			...validApiRun(session, "api-player-jumpy-revive", 10, "Jumpy Revive"),
+			run_duration: 1,
+			game_stats: { run_duration_ms: 2400, score: 10 },
+			input_trace: [
+				{ type: "swipe", timestamp_ms: 0, direction: "right" },
+				{ type: "revive", timestamp_ms: 1600 },
+				{ type: "swipe", timestamp_ms: 1608, direction: "right" },
+			],
+		};
+
+		const response = await postJson("/v1/games/api-game/runs", body);
+		expect(response.status).toBe(201);
+
+		const stored = await env.DB
+			.prepare("SELECT input_trace FROM runs WHERE run_id = ?")
+			.bind(body.run_id)
+			.first<{ input_trace: string }>();
+		expect(JSON.parse(stored?.input_trace ?? "[]")).toEqual([
+			{ type: "swipe", t_ms: 0, direction: "right" },
+			{ type: "revive", t_ms: 1600 },
+			{ type: "swipe", t_ms: 1608, direction: "right" },
 		]);
 	});
 

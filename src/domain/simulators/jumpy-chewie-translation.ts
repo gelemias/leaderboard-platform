@@ -14,6 +14,11 @@ const JUMPY_CONTRACT_VERSION = 1;
 const JUMPY_TIMESTEP_MS = 8;
 const JUMPY_MAX_DURATION_MS = 300_000;
 const JUMPY_MAX_TRACE_EVENTS = 4_096;
+// One rewarded revive per run. Unlike the other bounds this is a rule of the
+// game rather than of the format, but it is checkable without simulating and it
+// is the bound that matters: a trace that could revive twice could outlive any
+// board. Mirrors ReplayContract.MAX_REVIVES in the game.
+const JUMPY_MAX_REVIVES = 1;
 
 const jumpyReplayContractSchema = z
 	.object({
@@ -39,6 +44,7 @@ const jumpyReplayContractSchema = z
 
 		let previousTimestamp = -1;
 		let paused = false;
+		let revives = 0;
 		for (const [index, event] of request.input_trace.entries()) {
 			const timestamp = event.timestamp_ms;
 			if (timestamp % JUMPY_TIMESTEP_MS !== 0 || timestamp >= request.run_duration_ms) {
@@ -75,6 +81,23 @@ const jumpyReplayContractSchema = z
 					});
 				}
 				paused = false;
+			} else if (event.type === "revive") {
+				// A paused run cannot be chewed, so it cannot be revived either.
+				if (paused) {
+					context.addIssue({
+						code: "custom",
+						path: ["input_trace", index],
+						message: "a paused run has nothing to revive",
+					});
+				}
+				revives += 1;
+				if (revives > JUMPY_MAX_REVIVES) {
+					context.addIssue({
+						code: "custom",
+						path: ["input_trace", index],
+						message: "a run may be revived at most once",
+					});
+				}
 			}
 		}
 	});
@@ -108,6 +131,8 @@ export function translateJumpyInputTrace(trace: JumpyReplayInputTrace): Platform
 				return { type: "pause", t_ms: event.timestamp_ms };
 			case "resume":
 				return { type: "resume", t_ms: event.timestamp_ms };
+			case "revive":
+				return { type: "revive", t_ms: event.timestamp_ms };
 		}
 	});
 }
@@ -157,6 +182,9 @@ export function translatePlatformInputTrace(trace: PlatformReplayInputTrace): Ju
 		if (event.type === "resume") {
 			return { type: "resume", timestamp_ms: event.t_ms };
 		}
+		if (event.type === "revive") {
+			return { type: "revive", timestamp_ms: event.t_ms };
+		}
 		throw new Error(`Unsupported replay event: ${event.type}`);
 	});
 }
@@ -179,4 +207,4 @@ export function replayTimelineDurationMs(request: Pick<RunSubmissionRequest, "ru
 		(typeof pausedDuration === "number" && Number.isInteger(pausedDuration) && pausedDuration > 0 ? pausedDuration : 0);
 }
 
-export { JUMPY_CONTRACT_VERSION, JUMPY_GAME_ID, JUMPY_RULESET_VERSION, JUMPY_TIMESTEP_MS };
+export { JUMPY_CONTRACT_VERSION, JUMPY_GAME_ID, JUMPY_MAX_REVIVES, JUMPY_RULESET_VERSION, JUMPY_TIMESTEP_MS };

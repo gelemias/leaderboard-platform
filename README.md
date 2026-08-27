@@ -132,7 +132,7 @@ Wrangler persists local D1 data by default. The default binding uses the develop
 
 Runs have composite foreign keys to both `game_players` and `(game_id, ruleset_version)`. This prevents a run from mixing a player or ruleset from another game. Indexes cover ruleset eligibility/validator selection, player lookup, server receipt order, and accepted-run score ordering.
 
-The development seed creates the fictional `Cloud Hopper` reference game and the `Jumpy Chewie` `jumpy-chewie-2` and `jumpy-chewie-3` metadata. The latter is the current whole-cluster tooth-lifecycle ruleset. The seed is idempotent and can be run again with `npm run db:seed`.
+The development seed creates the fictional `Cloud Hopper` reference game and the `Jumpy Chewie` `jumpy-chewie-2` and `jumpy-chewie-3` metadata. The latter is the current whole-cluster tooth-lifecycle ruleset, and it also carries the `revive` input event: a rewarded revive is a new input rather than a new rule, so a trace without one replays exactly as it did before and no ruleset bump or history merge was needed. At most one `revive` per trace, and never inside a pause. The seed is idempotent and can be run again with `npm run db:seed`.
 
 ## PostgreSQL migration considerations
 
