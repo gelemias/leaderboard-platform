@@ -18,6 +18,10 @@ const pickupEventSchema = z
 
 const pauseEventSchema = z.object({ type: z.literal("pause"), t_ms: timestampSchema }).strict();
 const resumeEventSchema = z.object({ type: z.literal("resume"), t_ms: timestampSchema }).strict();
+// The rewarded revive. Like pause and resume it carries nothing but its moment;
+// what it means is decided by the simulation, which refuses one on a run that is
+// not dead the way it refuses a swipe into a wall.
+const reviveEventSchema = z.object({ type: z.literal("revive"), t_ms: timestampSchema }).strict();
 
 const jumpySwipeEventSchema = z
 	.object({ type: z.literal("swipe"), timestamp_ms: timestampSchema, direction: replayDirectionSchema })
@@ -33,6 +37,7 @@ const jumpyPickupEventSchema = z
 
 const jumpyPauseEventSchema = z.object({ type: z.literal("pause"), timestamp_ms: timestampSchema }).strict();
 const jumpyResumeEventSchema = z.object({ type: z.literal("resume"), timestamp_ms: timestampSchema }).strict();
+const jumpyReviveEventSchema = z.object({ type: z.literal("revive"), timestamp_ms: timestampSchema }).strict();
 
 const genericEventSchema = z
 	.object({
@@ -42,11 +47,14 @@ const genericEventSchema = z
 	})
 	.strict();
 
+// The generic variant stays last: it matches any typed event, so anything with a
+// shape of its own has to be offered first or it is swallowed and loses it.
 export const platformReplayInputEventSchema = z.union([
 	swipeEventSchema,
 	pickupEventSchema,
 	pauseEventSchema,
 	resumeEventSchema,
+	reviveEventSchema,
 	genericEventSchema,
 ]);
 
@@ -55,6 +63,7 @@ export const jumpyReplayInputEventSchema = z.union([
 	jumpyPickupEventSchema,
 	jumpyPauseEventSchema,
 	jumpyResumeEventSchema,
+	jumpyReviveEventSchema,
 ]);
 
 export const replayInputEventSchema = z.union([
